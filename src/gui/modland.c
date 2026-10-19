@@ -219,17 +219,25 @@ static int line_matches(const char *line, const char *query)
     return 1;
 }
 
-long modland_search(const char *dir, const char *query, const char *out_path,
-                    long max_hits, int *truncated)
+/* Author initial of a list line "name<TAB>author<TAB>...". */
+static int line_letter(const char *line)
+{
+    const char *tab = strchr(line, '\t');
+    return tab ? letter_slot((unsigned char)tab[1]) : 26;
+}
+
+long modland_collect(const char *dir, int letter, const char *query, const char *out_path,
+                     long max_hits, int *truncated, int *files_read)
 {
     char lower_query[128], path[300], line[1024];
     FILE *out;
     long hits = 0;
-    int c, l;
+    int c, l, want = letter ? letter_slot(letter) : -1;
     size_t i;
 
     *truncated = 0;
-    for (i = 0; query[i] && i < sizeof(lower_query) - 1; i++)
+    if (files_read) *files_read = 0;
+    for (i = 0; query && query[i] && i < sizeof(lower_query) - 1; i++)
         lower_query[i] = (char)lower_c((unsigned char)query[i]);
     lower_query[i] = 0;
 
@@ -239,11 +247,15 @@ long modland_search(const char *dir, const char *query, const char *out_path,
         int n = categories[c].split ? NLETTERS : 1;
         for (l = 0; l < n && !*truncated; l++) {
             FILE *in;
+            /* Split lists are already per letter: read only the right one. */
+            if (categories[c].split && want >= 0 && l != want) continue;
             modland_list_path(dir, c, categories[c].split ? (l == 26 ? '#' : 'A' + l) : 0, path);
             in = fopen(path, "r");
             if (!in) continue;
+            if (files_read) (*files_read)++;
             while (fgets(line, sizeof(line), in)) {
-                if (!line_matches(line, lower_query)) continue;
+                if (want >= 0 && line_letter(line) != want) continue;
+                if (lower_query[0] && !line_matches(line, lower_query)) continue;
                 fputs(line, out);
                 if (++hits >= max_hits) { *truncated = 1; break; }
             }
@@ -252,6 +264,12 @@ long modland_search(const char *dir, const char *query, const char *out_path,
     }
     if (fclose(out) != 0) return -1;
     return hits;
+}
+
+long modland_search(const char *dir, const char *query, const char *out_path,
+                    long max_hits, int *truncated)
+{
+    return modland_collect(dir, 0, query, out_path, max_hits, truncated, NULL);
 }
 
 /* ---- names and URLs ---- */

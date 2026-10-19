@@ -33,6 +33,13 @@ long modland_split_index(const char *zip_path, const char *out_dir);
 long modland_search(const char *dir, const char *query, const char *out_path,
                     long max_hits, int *truncated);
 
+/* Like modland_search, over all formats, optionally limited to authors
+ * starting with letter ('A'..'Z', '#' = others, 0 = any) and/or query
+ * words (NULL or "" = all). files_read (may be NULL) tells how many list
+ * files were found - 0 means the lists are missing. */
+long modland_collect(const char *dir, int letter, const char *query, const char *out_path,
+                     long max_hits, int *truncated, int *files_read);
+
 /* Percent-encodes a module path for the URL ('/' kept). 0 if too long. */
 int modland_url_encode(const char *path, char *out, int outlen);
 

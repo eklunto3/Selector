@@ -161,6 +161,19 @@ int main(int argc, char **argv)
                 if (strcmp(m.items[i].desc, "Protracker/Captain/space_debris.mod") == 0) n = 1;
             CHECK(n == 1);
             gl_free(&m);
+            {
+                int files = 0;
+                hits = modland_collect(dir, 'C', NULL, path, 12000, &trunc, &files);
+                printf("all formats, authors C: %ld from %d files\n", hits, files);
+                CHECK(files == 20 && hits > 2000);
+                CHECK(gl_load(&m, path, GL_FMT_AMINET));
+                for (i = 0, n = 0; i < m.count; i++) {
+                    CHECK(m.items[i].dir[0] == 'C' || m.items[i].dir[0] == 'c');
+                    if (strcmp(m.items[i].desc, "Protracker/Captain/space_debris.mod") == 0) n = 1;
+                }
+                CHECK(n == 1);
+                gl_free(&m);
+            }
             hits = modland_search(dir, "a", path, 50, &trunc);
             CHECK(hits == 50 && trunc);
         }
