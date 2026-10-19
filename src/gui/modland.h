@@ -25,6 +25,14 @@ void modland_list_path(const char *dir, int cat, int letter, char *out);
  * Returns the number of modules kept, or -1. */
 long modland_split_index(const char *zip_path, const char *out_dir);
 
+/* Searches every list file in dir (all formats, all author initials)
+ * for query (case-insensitive substring of module name, author or path;
+ * words separated by spaces must all match) and writes up to max_hits
+ * matching lines to out_path in the same format. Returns the number of
+ * hits, -1 on a file error. *truncated is set if max_hits was reached. */
+long modland_search(const char *dir, const char *query, const char *out_path,
+                    long max_hits, int *truncated);
+
 /* Percent-encodes a module path for the URL ('/' kept). 0 if too long. */
 int modland_url_encode(const char *path, char *out, int outlen);
 

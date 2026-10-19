@@ -188,6 +188,72 @@ long modland_split_index(const char *zip_path, const char *out_dir)
     return r == IF_OK ? kept : -1;
 }
 
+/* ---- search over all lists ---- */
+
+static int lower_c(int c) { return (c >= 'A' && c <= 'Z') ? c + 32 : c; }
+
+/* Case-insensitive substring; needle already lower case. */
+static int has_word(const char *hay, const char *needle, size_t n)
+{
+    for (; *hay; hay++) {
+        size_t i;
+        for (i = 0; i < n && hay[i] && lower_c((unsigned char)hay[i]) == needle[i]; i++)
+            ;
+        if (i == n) return 1;
+    }
+    return 0;
+}
+
+/* All space-separated words of query must occur in line. */
+static int line_matches(const char *line, const char *query)
+{
+    const char *q = query;
+    while (*q) {
+        size_t n;
+        while (*q == ' ') q++;
+        n = 0;
+        while (q[n] && q[n] != ' ') n++;
+        if (n && !has_word(line, q, n)) return 0;
+        q += n;
+    }
+    return 1;
+}
+
+long modland_search(const char *dir, const char *query, const char *out_path,
+                    long max_hits, int *truncated)
+{
+    char lower_query[128], path[300], line[1024];
+    FILE *out;
+    long hits = 0;
+    int c, l;
+    size_t i;
+
+    *truncated = 0;
+    for (i = 0; query[i] && i < sizeof(lower_query) - 1; i++)
+        lower_query[i] = (char)lower_c((unsigned char)query[i]);
+    lower_query[i] = 0;
+
+    out = fopen(out_path, "w");
+    if (!out) return -1;
+    for (c = 0; c < NCAT && !*truncated; c++) {
+        int n = categories[c].split ? NLETTERS : 1;
+        for (l = 0; l < n && !*truncated; l++) {
+            FILE *in;
+            modland_list_path(dir, c, categories[c].split ? (l == 26 ? '#' : 'A' + l) : 0, path);
+            in = fopen(path, "r");
+            if (!in) continue;
+            while (fgets(line, sizeof(line), in)) {
+                if (!line_matches(line, lower_query)) continue;
+                fputs(line, out);
+                if (++hits >= max_hits) { *truncated = 1; break; }
+            }
+            fclose(in);
+        }
+    }
+    if (fclose(out) != 0) return -1;
+    return hits;
+}
+
 /* ---- names and URLs ---- */
 
 int modland_url_encode(const char *path, char *out, int outlen)

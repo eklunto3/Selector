@@ -39,14 +39,14 @@ extern const char *WHDLOAD_FILE_FILTER_DAT_MAGAZINES;
 extern const char *DIR_DAT_FILES;
 
 size_t __stack = 131072;   /* same as whdfetch */
-static const char version[] = "$VER: WHDSelector 1.5 (19.10.2026)";
+static const char version[] = "$VER: WHDSelector 1.6 (19.10.2026)";
 
 struct Library *MUIMasterBase;
 
 #define MAKE_ID(a, b, c, d) ((ULONG)(a) << 24 | (ULONG)(b) << 16 | (ULONG)(c) << 8 | (ULONG)(d))
 
 enum { ID_PACK = 1, ID_SEARCH, ID_LETTER, ID_REFRESH, ID_DOWNLOAD, ID_STOP,
-       ID_SETTINGS, ID_SET_SAVE, ID_SET_CANCEL, ID_SOURCE, ID_PLAY, ID_DCLICK };
+       ID_SETTINGS, ID_SET_SAVE, ID_SET_CANCEL, ID_SOURCE, ID_PLAY, ID_DCLICK, ID_SEARCH_GO };
 
 /* ---- packs ---- */
 
@@ -107,14 +107,58 @@ static char list_file[256];
 #define SRC_MODLAND   2
 static int source = SRC_RETROPLAY;
 static Object *cy_source, *grp_pages, *cy_cat, *str_amidir, *cy_mod, *str_moddir;
-static const char **mod_labels;
-static int need_letter;        /* Modland list needs a letter first */
+static void load_pack(void);
+static int mod_search_mode(void);
+static int need_search;        /* Modland search mode without results yet */
+static int modland_searched;   /* a search has written search.txt */
+static const char *mod_cycle_labels[32];   /* "Search all formats" + formats */
+
+static void init_mod_labels(void)
+{
+    const char **l = modland_labels();
+    int i;
+    mod_cycle_labels[0] = "Search all formats";
+    for (i = 0; l[i] && i < 30; i++) mod_cycle_labels[i + 1] = l[i];
+    mod_cycle_labels[i + 1] = NULL;
+}
+
+/* Modland "Search all formats": runs the search over every list file. */
+static void modland_search_all(void)
+{
+    static char status[200], path[64];
+    STRPTR q = NULL;
+    long hits;
+    int truncated;
+
+    get(str_search, MUIA_String_Contents, &q);
+    if (!q || strlen((const char *)q) < 2) {
+        set(txt_status, MUIA_Text_Contents, (ULONG)"Type at least two characters, then press Enter.");
+        return;
+    }
+    sprintf(path, "%s/search.txt", engine_modland_dir());
+    set(app, MUIA_Application_Sleep, TRUE);
+    set(txt_status, MUIA_Text_Contents, (ULONG)"Searching all formats...");
+    hits = modland_search(engine_modland_dir(), (const char *)q, path, 2000, &truncated);
+    set(app, MUIA_Application_Sleep, FALSE);
+    if (hits < 0) {
+        set(txt_status, MUIA_Text_Contents, (ULONG)"No Modland lists yet. Press \"Refresh list\".");
+        return;
+    }
+    modland_searched = 1;
+    alog("Modland search '%s': %ld modules%s", (const char *)q, hits, truncated ? " (first 2000)" : "");
+    /* Show all hits: clear the live filter text effect by loading fresh. */
+    load_pack();
+    if (truncated) {
+        sprintf(status, "First 2000 matches shown - add words to narrow the search.");
+        set(txt_status, MUIA_Text_Contents, (ULONG)status);
+    }
+}
 
 static const char *source_labels[] = { "Retroplay WHDLoad", "Aminet", "Modland (music)", NULL };
 
 #define FORMAT_RETROPLAY "DELTA=16 W=55,DELTA=16 W=10,DELTA=16 W=25,P=\33r W=10"
 #define FORMAT_AMINET    "DELTA=16 W=20,DELTA=16 W=11,DELTA=16 P=\33r W=7,DELTA=16 W=9,W=53"
-#define FORMAT_MODLAND   "DELTA=16 W=55,DELTA=16 W=30,P=\33r W=15"
+#define FORMAT_MODLAND   "DELTA=16 W=45,DELTA=16 W=25,DELTA=16 W=18,P=\33r W=12"
 
 /* Aminet "category" gadget: Recent first (the default view, like the
  * Aminet front page), then the 16 top-level categories. */
@@ -147,11 +191,15 @@ static ULONG display_func(__reg("a0") struct Hook *hook, __reg("a2") char **arra
     static game_metadata meta;
 
     if (source == SRC_MODLAND) {
-        /* Modland columns: module, author, size. */
+        /* Modland columns: module, author, format, size. */
+        static char fmt_buf[40];
+        const char *slash;
+        size_t n;
         if (!e) {
             array[0] = "\33bModule";
             array[1] = "\33bAuthor";
-            array[2] = "\33bSize";
+            array[2] = "\33bFormat";
+            array[3] = "\33bSize";
             return 0;
         }
         if (e->size >= 1024UL * 1024UL)
@@ -159,9 +207,16 @@ static ULONG display_func(__reg("a0") struct Hook *hook, __reg("a2") char **arra
                     (e->size % (1024UL * 1024UL)) * 10 / (1024UL * 1024UL));
         else
             sprintf(size_buf, "%lu KB", (e->size + 1023) / 1024);
+        /* Format = first part of the Modland path. */
+        slash = strchr(e->desc, '/');
+        n = slash ? (size_t)(slash - e->desc) : 0;
+        if (n >= sizeof(fmt_buf)) n = sizeof(fmt_buf) - 1;
+        memcpy(fmt_buf, e->desc, n);
+        fmt_buf[n] = 0;
         array[0] = (char *)e->name;
         array[1] = (char *)e->dir;
-        array[2] = size_buf;
+        array[2] = fmt_buf;
+        array[3] = size_buf;
         return 0;
     }
 
@@ -265,6 +320,14 @@ static int find_list_file(const char *filter, char *out, int outlen)
 
 /* ---- list handling ---- */
 
+static int mod_search_mode(void)
+{
+    LONG m = 1;
+    if (source != SRC_MODLAND) return 0;
+    get(cy_mod, MUIA_Cycle_Active, &m);
+    return m == 0;
+}
+
 static void set_status(const char *text)
 {
     set(txt_status, MUIA_Text_Contents, (ULONG)text);
@@ -279,6 +342,9 @@ static void apply_filter(void)
 
     get(str_search, MUIA_String_Contents, &search);
     get(cy_letter, MUIA_Cycle_Active, &letter);
+    /* In "Search all formats" the text already selected the results
+     * (word by word); do not filter them again as one phrase. */
+    if (mod_search_mode()) search = NULL;
 
     set(lst, MUIA_NList_Quiet, TRUE);
     DoMethod(lst, MUIM_NList_Clear);
@@ -290,8 +356,10 @@ static void apply_filter(void)
 
     if (games.count > 0)
         sprintf(status, "Showing %ld of %ld  (%s)", n, games.count, FilePart((STRPTR)list_file));
-    else if (need_letter)
-        sprintf(status, "Too many modules for one list: choose a Letter (author's initial).");
+    else if (need_search)
+        sprintf(status, "Type a song or author in Search and press Enter to search all formats.");
+    else if (source == SRC_MODLAND && modland_searched)
+        sprintf(status, "No modules found. Try fewer or shorter words and press Enter.");
     else
         sprintf(status, "No list found. Press \"Refresh list\".");
     set_status(status);
@@ -306,7 +374,7 @@ static void load_pack(void)
     shown = NULL;
     gl_free(&games);
     list_file[0] = 0;
-    need_letter = 0;
+    need_search = 0;
 
     if (source == SRC_MODLAND) {
         LONG letter = 0;
@@ -314,18 +382,24 @@ static void load_pack(void)
         get(cy_mod, MUIA_Cycle_Active, &pack);
         get(cy_letter, MUIA_Cycle_Active, &letter);
         l = letter_value(letter);
-        if (modland_category_split((int)pack) && l == GL_LETTER_ALL) {
-            /* Too big for one list: start from authors beginning with A
-             * (nnset: no notification, so no second reload). */
-            nnset(cy_letter, MUIA_Cycle_Active, 2);
-            l = 'A';
-        }
-        {
-            modland_list_path(engine_modland_dir(), (int)pack,
-                              modland_category_split((int)pack) ? l : 0, list_file);
+        if (pack == 0) {
+            /* "Search all formats": results of the last search (Enter). */
+            sprintf(list_file, "%s/search.txt", engine_modland_dir());
+            found = modland_searched && gl_load(&games, list_file, GL_FMT_AMINET);
+            if (!found) need_search = 1;
+        } else {
+            int cat = (int)pack - 1;
+            if (modland_category_split(cat) && l == GL_LETTER_ALL) {
+                /* Too big for one list: start from authors beginning with A
+                 * (nnset: no notification, so no second reload). */
+                nnset(cy_letter, MUIA_Cycle_Active, 2);
+                l = 'A';
+            }
+            modland_list_path(engine_modland_dir(), cat,
+                              modland_category_split(cat) ? l : 0, list_file);
             found = gl_load(&games, list_file, GL_FMT_AMINET);
-            games.letter_on_dir = 1;   /* Letter = author's initial */
         }
+        games.letter_on_dir = 1;   /* Letter = author's initial */
     } else if (source == SRC_AMINET) {
         get(cy_cat, MUIA_Cycle_Active, &pack);
         if (pack == 0) strcpy(list_file, "temp/Aminet/recent.txt");
@@ -597,7 +671,7 @@ static Object *build_app(void)
                         Child, HGroup,
                             Child, Label2("Format:"),
                             Child, cy_mod = CycleObject,
-                                MUIA_Cycle_Entries, (ULONG)mod_labels,
+                                MUIA_Cycle_Entries, (ULONG)mod_cycle_labels,
                             End,
                         End,
                     End,
@@ -859,6 +933,8 @@ static void setup_notifies(void)
              (ULONG)app, 2, MUIM_Application_ReturnID, ID_LETTER);
     DoMethod(str_search, MUIM_Notify, MUIA_String_Contents, MUIV_EveryTime,
              (ULONG)app, 2, MUIM_Application_ReturnID, ID_SEARCH);
+    DoMethod(str_search, MUIM_Notify, MUIA_String_Acknowledge, MUIV_EveryTime,
+             (ULONG)app, 2, MUIM_Application_ReturnID, ID_SEARCH_GO);
     DoMethod(bt_refresh, MUIM_Notify, MUIA_Pressed, FALSE,
              (ULONG)app, 2, MUIM_Application_ReturnID, ID_REFRESH);
     DoMethod(bt_download, MUIM_Notify, MUIA_Pressed, FALSE,
@@ -891,7 +967,7 @@ int main(void)
     old_dir = CurrentDir(GetProgramDir());
     init_letters();
     init_cat_labels();
-    mod_labels = modland_labels();
+    init_mod_labels();
     MUIMasterBase = OpenLibrary((STRPTR)MUIMASTER_NAME, 19);
     if (!MUIMasterBase) {
         printf("WHDSelector needs MUI 3.8 or newer (muimaster.library v19).\n");
@@ -943,6 +1019,12 @@ int main(void)
         case ID_PACK:     load_pack(); break;
         case ID_SOURCE:   switch_source(); break;
         case ID_SEARCH:
+            /* Live filter; "Search all formats" waits for Enter instead. */
+            if (!mod_search_mode()) apply_filter();
+            break;
+        case ID_SEARCH_GO:
+            if (mod_search_mode()) modland_search_all();
+            break;
         case ID_LETTER:
             /* Modland Protracker lists are stored per author initial. */
             if (source == SRC_MODLAND) load_pack(); else apply_filter();

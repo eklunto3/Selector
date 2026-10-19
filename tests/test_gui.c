@@ -141,6 +141,29 @@ int main(int argc, char **argv)
         for (i = 0; i < m.count && i < 500; i++)
             CHECK(m.items[i].dir[0] == 'A' || m.items[i].dir[0] == 'a');
         gl_free(&m);
+        {
+            int trunc;
+            long hits;
+            snprintf(path, sizeof(path), "%.400s/search.txt", dir);
+            hits = modland_search(dir, "Purple Motion sundance", path, 2000, &trunc);
+            printf("search 'Purple Motion sundance': %ld\n", hits);
+            CHECK(hits == 1 && !trunc);
+            CHECK(gl_load(&m, path, GL_FMT_AMINET) && m.count == 1 &&
+                  strcmp(m.items[0].desc, "Protracker/Purple Motion/sundance.mod") == 0);
+            gl_free(&m);
+            hits = modland_search(dir, "purple motion", path, 2000, &trunc);
+            printf("search 'purple motion': %ld\n", hits);
+            CHECK(hits >= 6);
+            hits = modland_search(dir, "space debris", path, 2000, &trunc);
+            printf("search space debris: %ld\n", hits);
+            CHECK(gl_load(&m, path, GL_FMT_AMINET));
+            for (i = 0, n = 0; i < m.count; i++)
+                if (strcmp(m.items[i].desc, "Protracker/Captain/space_debris.mod") == 0) n = 1;
+            CHECK(n == 1);
+            gl_free(&m);
+            hits = modland_search(dir, "a", path, 50, &trunc);
+            CHECK(hits == 50 && trunc);
+        }
     }
 
     printf("%d checks, %d failures\n", checks, failures);
