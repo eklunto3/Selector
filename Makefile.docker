@@ -1,0 +1,56 @@
+# Linux/Docker build of whdfetch with the same vbcc flags as the original
+# Windows Makefile. Image: walkero/docker4amigavbcc:latest-m68k
+#   docker run --rm -v "$PWD:/work" -w /work walkero/docker4amigavbcc:latest-m68k make -f Makefile.docker
+# Builds a release binary (no DEBUG console, as "make RELEASE=1").
+
+PROJECT   = whdfetch
+SRC_DIR   = src
+OUT_DIR   = build/docker
+BIN_DIR   = Bin/Amiga
+BIN       = $(BIN_DIR)/$(PROJECT)
+GEN_DIR   = $(OUT_DIR)/generated
+BUILD_DATE ?= 18.03.2026
+
+VBCC        ?= /opt/vbcc
+NDK_INC      = /opt/sdk/NDK3.2/Include_H
+ROADSHOW_INC = /opt/sdk/Roadshow-SDK/netinclude
+
+CC = vc
+CFLAGS = +aos68k -c99 -cpu=68000 -O2 -size \
+         -I$(VBCC)/targets/m68k-amigaos/include \
+         -I$(SRC_DIR) -I$(GEN_DIR) -I$(NDK_INC) -I$(ROADSHOW_INC) \
+         -DPLATFORM_AMIGA=1 -D__AMIGA__ -DDEBUG
+LDFLAGS = +aos68k -cpu=68000 -O2 -size -final -lamiga -lauto -s
+
+SRCS = \
+	src/main.c src/cli/cli_parser.c src/config/app_constants.c \
+	src/config/app_defaults.c src/config/app_state.c src/startup/startup.c \
+	src/lifecycle/lifecycle.c src/phases/html_phase.c src/phases/dat_phase.c \
+	src/phases/download_phase.c src/ini_parser.c src/icon_unsnapshot.c \
+	src/utilities.c src/gamefile_parser.c src/tag_text.c src/cli_utilities.c \
+	src/linecounter.c src/report/report.c src/extract/extract.c \
+	src/download/http_download.c src/download/download_retry.c \
+	src/download/download_lib.c src/download/file_crc.c \
+	src/download/timer_shared.c src/download/display_message.c \
+	src/log/log.c src/platform/platform.c
+
+OBJS = $(patsubst src/%.c,$(OUT_DIR)/%.o,$(SRCS))
+
+all: $(BIN)
+
+$(GEN_DIR)/build_version.h:
+	@mkdir -p $(GEN_DIR)
+	@printf '#ifndef BUILD_VERSION_H\n#define BUILD_VERSION_H\n#define APP_BUILD_DATE_DMY "%s"\n#endif\n' "$(BUILD_DATE)" > $@
+
+$(OUT_DIR)/%.o: src/%.c $(GEN_DIR)/build_version.h
+	@mkdir -p $(dir $@)
+	$(CC) $(CFLAGS) -c $< -o $@
+
+$(BIN): $(OBJS)
+	@mkdir -p $(BIN_DIR)
+	$(CC) $(LDFLAGS) -o $@ $^
+
+clean:
+	rm -rf $(OUT_DIR) $(BIN)
+
+.PHONY: all clean

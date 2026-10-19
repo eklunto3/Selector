@@ -12,3 +12,5 @@ Bin/
 # Windows
 Thumbs.db
 desktop.ini
+build/docker/
+Bin/
