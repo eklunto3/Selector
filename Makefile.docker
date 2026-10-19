@@ -36,7 +36,29 @@ SRCS = \
 
 OBJS = $(patsubst src/%.c,$(OUT_DIR)/%.o,$(SRCS))
 
-all: $(BIN)
+# WHDSelector GUI: MUI 3.8 headers first, NList headers from the MUI 5 SDK
+# (they only define tags), never MUI 5 features.
+GUI_BIN  = $(BIN_DIR)/WHDSelector
+GUI_SRCS = src/gui/gui_main.c src/gui/game_list.c src/config/app_constants.c
+GUI_OBJS = $(patsubst src/%.c,$(OUT_DIR)/gui-obj/%.o,$(GUI_SRCS))
+GUI_CFLAGS = +aos68k -c99 -cpu=68020 -O2 -size \
+         -I$(VBCC)/targets/m68k-amigaos/include \
+         -I$(SRC_DIR) -I$(GEN_DIR) \
+         -I/opt/sdk/MUI_3.8/C/Include -I$(NDK_INC) -I/opt/sdk/MUI_5.0/C/include \
+         -I$(ROADSHOW_INC) -DPLATFORM_AMIGA=1 -D__AMIGA__
+GUI_LDFLAGS = +aos68k -cpu=68020 -O2 -size -final -lamiga -lauto -s
+
+all: $(BIN) $(GUI_BIN)
+
+gui: $(GUI_BIN)
+
+$(OUT_DIR)/gui-obj/%.o: src/%.c $(GEN_DIR)/build_version.h
+	@mkdir -p $(dir $@)
+	$(CC) $(GUI_CFLAGS) -c $< -o $@
+
+$(GUI_BIN): $(GUI_OBJS)
+	@mkdir -p $(BIN_DIR)
+	$(CC) $(GUI_LDFLAGS) -o $@ $^
 
 $(GEN_DIR)/build_version.h:
 	@mkdir -p $(GEN_DIR)
@@ -53,4 +75,4 @@ $(BIN): $(OBJS)
 clean:
 	rm -rf $(OUT_DIR) $(BIN)
 
-.PHONY: all clean
+.PHONY: all clean gui
