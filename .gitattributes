@@ -1,3 +1,3 @@
 *.guide text eol=lf
 *.txt text eol=lf
-*.readme text eol=lf
+*.readme text eol=lfMakefile.docker text eol=lf
