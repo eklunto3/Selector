@@ -28,6 +28,8 @@ typedef struct {
     int err;                   /* nonzero: input ran out or bad data */
 
     FILE *out;
+    inflate_sink_fn sink;      /* when set, output goes here instead of out */
+    void *sink_user;
     unsigned char win[WIN_SIZE];
     unsigned wpos;
     unsigned long total;       /* bytes produced */
@@ -87,6 +89,7 @@ static unsigned bits(inflater *s, int need)
 static int flush_window(inflater *s, unsigned n)
 {
     s->crc = inflate_crc32(s->crc, s->win, (long)n);
+    if (s->sink) return s->sink(s->win, n, s->sink_user);
     if (fwrite(s->win, 1, n, s->out) != n) return 0;
     return 1;
 }
@@ -351,5 +354,45 @@ done:
         if (rename(tmp_path, out_path) != 0) r = IF_ERR_IO;
     }
     if (r != IF_OK && out) remove(tmp_path);
+    return r;
+}
+
+int inflate_unzip_first_to_sink(const char *zip_path, inflate_sink_fn sink, void *user)
+{
+    unsigned char hdr[30];
+    unsigned long flags, method, crc, csize, usize, nlen, xlen;
+    inflater *s = 0;
+    FILE *in;
+    int r = IF_OK;
+
+    in = fopen(zip_path, "rb");
+    if (!in) return IF_ERR_IO;
+    if (fread(hdr, 1, 30, in) != 30 || le32(hdr) != 0x04034B50UL) { r = IF_ERR_FORMAT; goto done; }
+    flags = le16(hdr + 6);
+    method = le16(hdr + 8);
+    crc = le32(hdr + 14);
+    csize = le32(hdr + 18);
+    usize = le32(hdr + 22);
+    nlen = le16(hdr + 26);
+    xlen = le16(hdr + 28);
+    /* Encrypted entries and trailing data descriptors are not used by the
+     * index files we read; refuse them instead of guessing. */
+    if ((flags & 1) || (flags & 8) || method != 8) { r = IF_ERR_FORMAT; goto done; }
+    if (fseek(in, (long)(nlen + xlen), SEEK_CUR) != 0) { r = IF_ERR_FORMAT; goto done; }
+
+    s = (inflater *)malloc(sizeof(inflater));
+    if (!s) { r = IF_ERR_NOMEM; goto done; }
+    memset(s, 0, sizeof(*s));
+    s->in = in;
+    s->remaining = csize;
+    s->sink = sink;
+    s->sink_user = user;
+
+    r = inflate_stream(s);
+    if (r == IF_OK && (s->total != usize || s->crc != crc)) r = IF_ERR_DATA;
+
+done:
+    fclose(in);
+    free(s);
     return r;
 }

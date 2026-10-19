@@ -21,6 +21,7 @@ typedef struct {
     gl_entry *items;
     long count;
     char *text;           /* file contents; strings point into this */
+    int letter_on_dir;    /* letter filter uses dir (Modland author), not name */
 } gl_list;
 
 /* Loads a list file. Returns 0 on failure (list stays empty). */

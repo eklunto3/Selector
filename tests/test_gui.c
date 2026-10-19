@@ -6,6 +6,10 @@
 #include "gui/inflate.h"
 #include "gui/aminet.h"
 #include "gui/game_list.h"
+#include "gui/modland.h"
+#include <sys/stat.h>
+
+static void mkdir_p(const char *d) { mkdir(d, 0755); }
 
 static int failures, checks;
 #define CHECK(c) do { checks++; if (!(c)) { failures++; printf("FAIL line %d: %s\n", __LINE__, #c); } } while (0)
@@ -29,7 +33,7 @@ int main(int argc, char **argv)
 {
     char out[512], path[512];
     long total, n, i;
-    gl_list list = { 0, 0, 0 };
+    gl_list list = { 0, 0, 0, 0 };
     gl_entry **shown;
     int found_aaa = 0;
 
@@ -50,7 +54,7 @@ int main(int argc, char **argv)
     {
         /* RECENT has the INDEX line format. */
         FILE *f;
-        gl_list r = { 0, 0, 0 };
+        gl_list r = { 0, 0, 0, 0 };
         sprintf(path, "%s/RECENT", argv[1]);
         f = fopen(path, "w");
         fputs("|\n| Aminet index, created on 19-Oct-2026\n|\n\n"
@@ -97,6 +101,45 @@ int main(int argc, char **argv)
     for (i = 0; i < n; i++) CHECK(shown[i]->name[0] == 'A' || shown[i]->name[0] == 'a');
     free(shown);
     gl_free(&list);
+
+    /* Modland */
+    {
+        char enc[200], local[40];
+        CHECK(modland_url_encode("Ace Tracker/505/blocks.am", enc, sizeof(enc)));
+        CHECK(strcmp(enc, "Ace%20Tracker/505/blocks.am") == 0);
+        CHECK(modland_url_encode("A & B/x#y.mod", enc, sizeof(enc)) && strcmp(enc, "A%20%26%20B/x%23y.mod") == 0);
+        modland_local_name("short.mod", local);
+        CHECK(strcmp(local, "short.mod") == 0);
+        modland_local_name("a very long module name that does not fit.mod", local);
+        CHECK(strlen(local) == 30 && strcmp(local + 26, ".mod") == 0);
+        modland_local_name("bad:name.mod", local);
+        CHECK(strcmp(local, "bad_name.mod") == 0);
+        CHECK(modland_category_count() == 20);
+        CHECK(modland_category_split(0) && !modland_category_split(4));
+    }
+    if (argc > 4) {
+        char dir[512];
+        gl_list m = { 0, 0, 0, 0 };
+        long kept;
+        sprintf(dir, "%s/modland", argv[1]);
+        mkdir_p(dir);
+        kept = modland_split_index(argv[4], dir);
+        printf("modland kept: %ld\n", kept);
+        CHECK(kept > 90000);
+        modland_list_path(dir, 4, 0, path);              /* AHX */
+        CHECK(gl_load(&m, path, GL_FMT_AMINET));
+        printf("AHX: %ld\n", m.count);
+        CHECK(m.count == 1390);
+        CHECK(m.count > 0 && strncmp(m.items[0].desc, "AHX/", 4) == 0);
+        gl_free(&m);
+        modland_list_path(dir, 0, 'A', path);            /* Protracker, authors A */
+        CHECK(gl_load(&m, path, GL_FMT_AMINET));
+        printf("Protracker A: %ld\n", m.count);
+        CHECK(m.count > 1000);
+        for (i = 0; i < m.count && i < 500; i++)
+            CHECK(m.items[i].dir[0] == 'A' || m.items[i].dir[0] == 'a');
+        gl_free(&m);
+    }
 
     printf("%d checks, %d failures\n", checks, failures);
     return failures ? 1 : 0;

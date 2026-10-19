@@ -33,6 +33,16 @@ int engine_refresh_aminet(char *msg, int msg_len);
 int engine_install_aminet(const char *dir, const char *name);
 const char *engine_aminet_target(void);
 
+/* Modland: downloads allmods.zip and writes the Amiga-format lists to
+ * temp/Modland/ (see modland.h). Returns 0 on failure. */
+int engine_refresh_modland(char *msg, int msg_len);
+const char *engine_modland_dir(void);
+
+/* Downloads one module (path as in the index) to
+ * <Music target>/<author>/<name>. ENGINE_* result. */
+int engine_install_modland(const char *path, const char *author, const char *name);
+const char *engine_modland_target(void);
+
 /* Where extracted titles go, for the status line. */
 const char *engine_extract_target(void);
 
@@ -44,6 +54,7 @@ typedef struct {
     int delete_archives;
     int skip_aga, skip_cd, skip_ntsc, skip_non_english;
     char aminet_dir[256];    /* "" = Aminet/ in the program directory */
+    char modland_dir[256];   /* "" = Music/ in the program directory */
 } engine_settings;
 
 void engine_get_settings(engine_settings *s);

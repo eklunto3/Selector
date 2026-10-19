@@ -20,6 +20,7 @@
 #include "gui/engine.h"
 #include "gui/aminet.h"
 #include "gui/inflate.h"
+#include "gui/modland.h"
 
 #include <dos/dostags.h>
 #include <proto/dos.h>
@@ -34,6 +35,7 @@ static BOOL download_lib_ready = FALSE;
 static int initialised = 0;      /* network ready */
 static int config_loaded = 0;    /* defaults + whdfetch.ini loaded */
 static char aminet_dir_buf[256]; /* aminet_extract_path from whdfetch.ini */
+static char modland_dir_buf[256]; /* modland_extract_path from whdfetch.ini */
 static void read_aminet_setting(void);
 
 /* GUI cycle order -> whdfetch pack index (see app_constants.c). */
@@ -153,7 +155,7 @@ int engine_install(int pack, const char *archive, unsigned long size, const char
 /* ---- settings ---- */
 
 #define INI_PATH "PROGDIR:whdfetch.ini"
-#define NUM_KEYS 7
+#define NUM_KEYS 8
 
 static char install_dir_buf[256];
 
@@ -169,6 +171,7 @@ void engine_get_settings(engine_settings *s)
     s->skip_ntsc = skip_NTSC != 0;
     s->skip_non_english = skip_NonEnglish != 0;
     strncpy(s->aminet_dir, aminet_dir_buf, sizeof(s->aminet_dir) - 1);
+    strncpy(s->modland_dir, modland_dir_buf, sizeof(s->modland_dir) - 1);
 }
 
 /* "key" or "key  =..." at the start of an ini line (after blanks). */
@@ -252,7 +255,7 @@ int engine_save_settings(const engine_settings *s, char *msg, int msg_len)
     static const char *keys[NUM_KEYS] = {
         "extract_path", "delete_archives_after_extract",
         "skip_aga", "skip_cd", "skip_ntsc", "skip_non_english",
-        "aminet_extract_path"
+        "aminet_extract_path", "modland_extract_path"
     };
     static char values[NUM_KEYS][260];
 
@@ -275,29 +278,37 @@ int engine_save_settings(const engine_settings *s, char *msg, int msg_len)
     strncpy(aminet_dir_buf, s->aminet_dir, sizeof(aminet_dir_buf) - 1);
     aminet_dir_buf[sizeof(aminet_dir_buf) - 1] = 0;
     strcpy(values[6], aminet_dir_buf);
+    strncpy(modland_dir_buf, s->modland_dir, sizeof(modland_dir_buf) - 1);
+    modland_dir_buf[sizeof(modland_dir_buf) - 1] = 0;
+    strcpy(values[7], modland_dir_buf);
     return write_ini(keys, values, msg, msg_len);
 }
 
-/* whdfetch's own parser ignores keys it does not know, so the Aminet
- * target is read here from the [global] section. */
+/* whdfetch's own parser ignores keys it does not know, so the Aminet and
+ * Modland targets are read here from the [global] section. */
 static void read_aminet_setting(void)
 {
     static char line[512];
     FILE *f = fopen(INI_PATH, "r");
     int in_global = 0;
     aminet_dir_buf[0] = 0;
+    modland_dir_buf[0] = 0;
     if (!f) return;
     while (fgets(line, sizeof(line), f)) {
         const char *end;
+        char *target = NULL;
         if (is_section(line, &end)) { in_global = is_global_section(line); continue; }
-        if (in_global && line_has_key(line, "aminet_extract_path")) {
+        if (!in_global) continue;
+        if (line_has_key(line, "aminet_extract_path")) target = aminet_dir_buf;
+        else if (line_has_key(line, "modland_extract_path")) target = modland_dir_buf;
+        if (target) {
             char *v = strchr(line, '=') + 1;
             size_t n;
             while (*v == ' ' || *v == '\t') v++;
             n = strlen(v);
             while (n > 0 && (v[n - 1] == '\n' || v[n - 1] == '\r' || v[n - 1] == ' ')) v[--n] = 0;
-            strncpy(aminet_dir_buf, v, sizeof(aminet_dir_buf) - 1);
-            aminet_dir_buf[sizeof(aminet_dir_buf) - 1] = 0;
+            strncpy(target, v, 255);
+            target[255] = 0;
         }
     }
     fclose(f);
@@ -463,6 +474,93 @@ int engine_install_aminet(const char *dir, const char *name)
         return ENGINE_FAILED;
     }
     printf("Installed to %s\n", dest);
+    return ENGINE_INSTALLED;
+}
+
+/* ---- Modland ---- */
+
+#define MODLAND_DIR     "temp/Modland"
+#define MODLAND_DEFAULT "Music/"
+
+const char *engine_modland_dir(void) { return MODLAND_DIR; }
+
+const char *engine_modland_target(void)
+{
+    return modland_dir_buf[0] ? modland_dir_buf : MODLAND_DEFAULT;
+}
+
+int engine_refresh_modland(char *msg, int msg_len)
+{
+    char zip[64];
+    long count;
+
+    if (!initialised) { set_msg(msg, msg_len, "Not initialised."); return 0; }
+    if (!ensure_dir(DIR_TEMP) || !ensure_dir(MODLAND_DIR)) {
+        set_msg(msg, msg_len, "Cannot create " MODLAND_DIR);
+        return 0;
+    }
+    sprintf(zip, "%s/allmods.zip", MODLAND_DIR);
+    printf("Downloading %s\n", MODLAND_INDEX_URL);
+    if (ad_download_http_file_with_retries(MODLAND_INDEX_URL, zip, TRUE) != AD_SUCCESS) {
+        set_msg(msg, msg_len, "Could not download the Modland index (allmods.zip).");
+        return 0;
+    }
+    printf("Unpacking and sorting allmods.zip (Amiga formats only)\n");
+    count = modland_split_index(zip, MODLAND_DIR);
+    DeleteFile((STRPTR)zip);   /* 5.8 MB, only needed for the split */
+    if (count < 0) {
+        set_msg(msg, msg_len, "Could not read allmods.zip or write the lists.");
+        return 0;
+    }
+    printf("Modland: %ld Amiga modules\n", count);
+    return 1;
+}
+
+int engine_install_modland(const char *path, const char *author, const char *name)
+{
+    char url[600], enc[520], base[260], dir[300], file[340], local[40], auth[40];
+    LONG rc;
+
+    if (!initialised) return ENGINE_FAILED;
+    if (!modland_url_encode(path, enc, sizeof(enc))) return ENGINE_FAILED;
+    sprintf(url, "%s%s", MODLAND_BASE_URL, enc);
+
+    strncpy(base, engine_modland_target(), sizeof(base) - 2);
+    base[sizeof(base) - 2] = 0;
+    if (base[0] && base[strlen(base) - 1] != '/' && base[strlen(base) - 1] != ':') strcat(base, "/");
+
+    /* <target>/<author>/<module>, names shortened for FFS. */
+    modland_local_name(author[0] ? author : "Unknown", auth);
+    modland_local_name(name, local);
+    {
+        char b[260];
+        strcpy(b, base);
+        if (b[0] && b[strlen(b) - 1] == '/') b[strlen(b) - 1] = 0;
+        if (b[0] && b[strlen(b) - 1] != ':' && !ensure_dir(b)) {
+            printf("Cannot create %s\n", b);
+            return ENGINE_FAILED;
+        }
+    }
+    sprintf(dir, "%s%s", base, auth);
+    sprintf(file, "%s/%s", dir, local);
+    if (path_exists(file)) {
+        printf("Already there: %s\n", file);
+        return ENGINE_SKIPPED;
+    }
+    if (!ensure_dir(dir)) {
+        printf("Cannot create %s\n", dir);
+        return ENGINE_FAILED;
+    }
+    printf("Downloading %s\n", url);
+    rc = ad_download_http_file_with_retries(url, file, TRUE);
+    if (rc != AD_SUCCESS) {
+        DeleteFile((STRPTR)file);
+        DeleteFile((STRPTR)dir);    /* only if it is still empty */
+        if (rc == 20) return ENGINE_CANCELLED;
+        printf("Download failed: %s\n", url);
+        return ENGINE_FAILED;
+    }
+    printf("Saved %s\n", file);
     return ENGINE_INSTALLED;
 }
 

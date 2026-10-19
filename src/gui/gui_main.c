@@ -27,6 +27,7 @@
 #include "gui/engine.h"
 #include "gui/activity_log.h"
 #include "gui/aminet.h"
+#include "gui/modland.h"
 #include "gui/logo_data.h"
 
 extern const char *WHDLOAD_FILE_FILTER_DAT_GAMES;
@@ -37,7 +38,7 @@ extern const char *WHDLOAD_FILE_FILTER_DAT_MAGAZINES;
 extern const char *DIR_DAT_FILES;
 
 size_t __stack = 131072;   /* same as whdfetch */
-static const char version[] = "$VER: WHDSelector 1.2 (19.10.2026)";
+static const char version[] = "$VER: WHDSelector 1.3 (19.10.2026)";
 
 struct Library *MUIMasterBase;
 
@@ -102,13 +103,17 @@ static char list_file[256];
 
 #define SRC_RETROPLAY 0
 #define SRC_AMINET    1
+#define SRC_MODLAND   2
 static int source = SRC_RETROPLAY;
-static Object *cy_source, *grp_pages, *cy_cat, *str_amidir;
+static Object *cy_source, *grp_pages, *cy_cat, *str_amidir, *cy_mod, *str_moddir;
+static const char **mod_labels;
+static int need_letter;        /* Modland list needs a letter first */
 
-static const char *source_labels[] = { "Retroplay WHDLoad", "Aminet", NULL };
+static const char *source_labels[] = { "Retroplay WHDLoad", "Aminet", "Modland (music)", NULL };
 
 #define FORMAT_RETROPLAY "DELTA=16 W=55,DELTA=16 W=10,DELTA=16 W=25,P=\33r W=10"
 #define FORMAT_AMINET    "DELTA=16 W=20,DELTA=16 W=11,DELTA=16 P=\33r W=7,DELTA=16 W=9,W=53"
+#define FORMAT_MODLAND   "DELTA=16 W=55,DELTA=16 W=30,P=\33r W=15"
 
 /* Aminet "category" gadget: Recent first (the default view, like the
  * Aminet front page), then the 16 top-level categories. */
@@ -139,6 +144,25 @@ static ULONG display_func(__reg("a0") struct Hook *hook, __reg("a2") char **arra
     static char size_buf[16];
     static char info[300];
     static game_metadata meta;
+
+    if (source == SRC_MODLAND) {
+        /* Modland columns: module, author, size. */
+        if (!e) {
+            array[0] = "\33bModule";
+            array[1] = "\33bAuthor";
+            array[2] = "\33bSize";
+            return 0;
+        }
+        if (e->size >= 1024UL * 1024UL)
+            sprintf(size_buf, "%lu.%lu MB", e->size / (1024UL * 1024UL),
+                    (e->size % (1024UL * 1024UL)) * 10 / (1024UL * 1024UL));
+        else
+            sprintf(size_buf, "%lu KB", (e->size + 1023) / 1024);
+        array[0] = (char *)e->name;
+        array[1] = (char *)e->dir;
+        array[2] = size_buf;
+        return 0;
+    }
 
     if (source == SRC_AMINET) {
         /* Aminet columns: name, category, size, age, description. */
@@ -265,6 +289,8 @@ static void apply_filter(void)
 
     if (games.count > 0)
         sprintf(status, "Showing %ld of %ld  (%s)", n, games.count, FilePart((STRPTR)list_file));
+    else if (need_letter)
+        sprintf(status, "Too many modules for one list: choose a Letter (author's initial).");
     else
         sprintf(status, "No list found. Press \"Refresh list\".");
     set_status(status);
@@ -279,8 +305,24 @@ static void load_pack(void)
     shown = NULL;
     gl_free(&games);
     list_file[0] = 0;
+    need_letter = 0;
 
-    if (source == SRC_AMINET) {
+    if (source == SRC_MODLAND) {
+        LONG letter = 0;
+        int l;
+        get(cy_mod, MUIA_Cycle_Active, &pack);
+        get(cy_letter, MUIA_Cycle_Active, &letter);
+        l = letter_value(letter);
+        if (modland_category_split((int)pack) && l == GL_LETTER_ALL) {
+            need_letter = 1;
+            found = 0;
+        } else {
+            modland_list_path(engine_modland_dir(), (int)pack,
+                              modland_category_split((int)pack) ? l : 0, list_file);
+            found = gl_load(&games, list_file, GL_FMT_AMINET);
+            games.letter_on_dir = 1;   /* Letter = author's initial */
+        }
+    } else if (source == SRC_AMINET) {
         get(cy_cat, MUIA_Cycle_Active, &pack);
         if (pack == 0) strcpy(list_file, "temp/Aminet/recent.txt");
         else sprintf(list_file, "temp/Aminet/%s.txt", aminet_categories[pack - 1]);
@@ -304,7 +346,8 @@ static void switch_source(void)
     get(cy_source, MUIA_Cycle_Active, &s);
     source = (int)s;
     set(grp_pages, MUIA_Group_ActivePage, s);
-    set(lst, MUIA_NList_Format, (ULONG)(source == SRC_AMINET ? FORMAT_AMINET : FORMAT_RETROPLAY));
+    set(lst, MUIA_NList_Format, (ULONG)(source == SRC_MODLAND ? FORMAT_MODLAND :
+                                        source == SRC_AMINET ? FORMAT_AMINET : FORMAT_RETROPLAY));
     load_pack();
     alog("Source: %s", source_labels[source]);
 }
@@ -322,7 +365,10 @@ static void refresh_lists(void)
     }
     set(app, MUIA_Application_Sleep, TRUE);
     msg[0] = 0;
-    if (source == SRC_AMINET) {
+    if (source == SRC_MODLAND) {
+        set_status("Fetching the Modland index (about 5.8 MB, this takes a while)...");
+        alog("Refresh: downloading Modland allmods.zip...");
+    } else if (source == SRC_AMINET) {
         set_status("Fetching the Aminet index (about 1.9 MB, this takes a while)...");
         alog("Refresh: downloading Aminet INDEX.gz...");
     } else {
@@ -330,7 +376,8 @@ static void refresh_lists(void)
         alog("Refresh: downloading index page and DAT files...");
     }
     alog_capture_begin();
-    if (!(source == SRC_AMINET ? engine_refresh_aminet(msg, sizeof(msg))
+    if (!(source == SRC_MODLAND ? engine_refresh_modland(msg, sizeof(msg)) :
+          source == SRC_AMINET ? engine_refresh_aminet(msg, sizeof(msg))
                                : engine_refresh_lists(msg, sizeof(msg)))) {
         alog_capture_end();
         alog("Refresh failed: %s", msg);
@@ -410,7 +457,9 @@ static void download_selected(void)
         alog("Download %ld/%ld: %s (%lu KB)", i + 1, n, todo[i]->name,
              (todo[i]->size + 1023) / 1024);
         alog_capture_begin();
-        if (source == SRC_AMINET)
+        if (source == SRC_MODLAND)
+            r = engine_install_modland(todo[i]->desc, todo[i]->dir, todo[i]->name);
+        else if (source == SRC_AMINET)
             r = engine_install_aminet(todo[i]->dir, todo[i]->name);
         else
             r = engine_install((int)pack, todo[i]->name, todo[i]->size, todo[i]->crc);
@@ -432,6 +481,7 @@ static void download_selected(void)
 
     sprintf(status, "%s%d installed, %d already there, %d failed. Target: %.150s",
             stopped ? "Stopped. " : "Done. ", installed, skipped, failed,
+            source == SRC_MODLAND ? engine_modland_target() :
             source == SRC_AMINET ? engine_aminet_target() : engine_extract_target());
     set_status(status);
     alog("%s", status);
@@ -445,7 +495,7 @@ static Object *build_app(void)
         MUIA_Application_Title, (ULONG)"WHDSelector",
         MUIA_Application_Version, (ULONG)version,
         MUIA_Application_Copyright, (ULONG)"Personal use",
-        MUIA_Application_Description, (ULONG)"Browser for Retroplay WHDLoad packs and Aminet",
+        MUIA_Application_Description, (ULONG)"Browser for Retroplay WHDLoad packs, Aminet and Modland",
         MUIA_Application_Base, (ULONG)"WHDSELECTOR",
 
         SubWindow, win = WindowObject,
@@ -488,6 +538,12 @@ static Object *build_app(void)
                             Child, Label2("Category:"),
                             Child, cy_cat = CycleObject,
                                 MUIA_Cycle_Entries, (ULONG)cat_labels,
+                            End,
+                        End,
+                        Child, HGroup,
+                            Child, Label2("Format:"),
+                            Child, cy_mod = CycleObject,
+                                MUIA_Cycle_Entries, (ULONG)mod_labels,
                             End,
                         End,
                     End,
@@ -599,6 +655,25 @@ static Object *build_app(void)
                     End,
                 End,
 
+                Child, VGroup, GroupFrameT("Modland (music)"),
+                    Child, HGroup,
+                        Child, Label2("Music directory:"),
+                        Child, PopaslObject,
+                            MUIA_Popstring_String, str_moddir = StringObject,
+                                StringFrame,
+                                MUIA_String_MaxLen, 255,
+                                MUIA_CycleChain, 1,
+                            End,
+                            MUIA_Popstring_Button, PopButton(MUII_PopDrawer),
+                            ASLFR_TitleText, (ULONG)"Select music directory",
+                            ASLFR_DrawersOnly, TRUE,
+                        End,
+                    End,
+                    Child, TextObject,
+                        MUIA_Text_Contents, (ULONG)"\33cModules go to <directory>/<author>/. Empty = Music in the program directory",
+                    End,
+                End,
+
                 Child, VGroup, GroupFrameT("WHDLoad list filters (applied on Refresh list)"),
                     Child, ColGroup(4),
                         Child, cm_aga = CheckMark(FALSE),
@@ -630,6 +705,7 @@ static void open_settings(void)
     engine_get_settings(&s);
     set(str_dir, MUIA_String_Contents, (ULONG)s.install_dir);
     set(str_amidir, MUIA_String_Contents, (ULONG)s.aminet_dir);
+    set(str_moddir, MUIA_String_Contents, (ULONG)s.modland_dir);
     set(cm_delete, MUIA_Selected, s.delete_archives);
     set(cm_aga, MUIA_Selected, s.skip_aga);
     set(cm_cd, MUIA_Selected, s.skip_cd);
@@ -670,6 +746,15 @@ static void save_settings(void)
             if (last != ':' && last != '/') strcat(s.aminet_dir, "/");
         }
     }
+    dir = NULL;
+    get(str_moddir, MUIA_String_Contents, &dir);
+    if (dir) {
+        strncpy(s.modland_dir, (const char *)dir, sizeof(s.modland_dir) - 2);
+        if (s.modland_dir[0]) {
+            char last = s.modland_dir[strlen(s.modland_dir) - 1];
+            if (last != ':' && last != '/') strcat(s.modland_dir, "/");
+        }
+    }
     s.delete_archives = (int)checked(cm_delete);
     s.skip_aga = (int)checked(cm_aga);
     s.skip_cd = (int)checked(cm_cd);
@@ -689,6 +774,8 @@ static void setup_notifies(void)
     DoMethod(win, MUIM_Notify, MUIA_Window_CloseRequest, TRUE,
              (ULONG)app, 2, MUIM_Application_ReturnID, MUIV_Application_ReturnID_Quit);
     DoMethod(cy_pack, MUIM_Notify, MUIA_Cycle_Active, MUIV_EveryTime,
+             (ULONG)app, 2, MUIM_Application_ReturnID, ID_PACK);
+    DoMethod(cy_mod, MUIM_Notify, MUIA_Cycle_Active, MUIV_EveryTime,
              (ULONG)app, 2, MUIM_Application_ReturnID, ID_PACK);
     DoMethod(cy_cat, MUIM_Notify, MUIA_Cycle_Active, MUIV_EveryTime,
              (ULONG)app, 2, MUIM_Application_ReturnID, ID_PACK);
@@ -728,6 +815,7 @@ int main(void)
     old_dir = CurrentDir(GetProgramDir());
     init_letters();
     init_cat_labels();
+    mod_labels = modland_labels();
     MUIMasterBase = OpenLibrary((STRPTR)MUIMASTER_NAME, 19);
     if (!MUIMasterBase) {
         printf("WHDSelector needs MUI 3.8 or newer (muimaster.library v19).\n");
@@ -779,7 +867,10 @@ int main(void)
         case ID_PACK:     load_pack(); break;
         case ID_SOURCE:   switch_source(); break;
         case ID_SEARCH:
-        case ID_LETTER:   apply_filter(); break;
+        case ID_LETTER:
+            /* Modland Protracker lists are stored per author initial. */
+            if (source == SRC_MODLAND) load_pack(); else apply_filter();
+            break;
         case ID_REFRESH:  refresh_lists(); break;
         case ID_DOWNLOAD: download_selected(); break;
         case ID_SETTINGS: open_settings(); break;

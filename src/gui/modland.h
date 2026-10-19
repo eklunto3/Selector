@@ -1,0 +1,35 @@
+#ifndef GUI_MODLAND_H
+#define GUI_MODLAND_H
+
+/* Modland music archive: http://ftp.modland.com/allmods.zip holds one
+ * text file, "size<TAB>Format/Author/.../file" per module (516,187 lines,
+ * 30 MB on 2026-10-19). Module URL: MODLAND_BASE_URL + path. Only formats
+ * that play on an Amiga are kept (see modland.c). */
+
+#define MODLAND_INDEX_URL "http://ftp.modland.com/allmods.zip"
+#define MODLAND_BASE_URL  "http://ftp.modland.com/pub/modules/"
+
+int modland_category_count(void);
+const char **modland_labels(void);             /* NULL-terminated, for a cycle */
+
+/* Categories with many modules are stored per author initial; the GUI
+ * then needs a letter ('A'..'Z' or '#') to load a list. */
+int modland_category_split(int cat);
+
+/* List file for a category ("temp/Modland/<n>.txt", or
+ * "temp/Modland/<n>_<L>.txt" for split categories; letter 0 = whole). */
+void modland_list_path(const char *dir, int cat, int letter, char *out);
+
+/* Streams the zipped index and writes the list files into out_dir with
+ * lines "name<TAB>author<TAB>size<TAB>0<TAB>path" (GL_FMT_AMINET layout).
+ * Returns the number of modules kept, or -1. */
+long modland_split_index(const char *zip_path, const char *out_dir);
+
+/* Percent-encodes a module path for the URL ('/' kept). 0 if too long. */
+int modland_url_encode(const char *path, char *out, int outlen);
+
+/* Name usable on an OS 3.1 FFS volume: no ':' or '/', at most 30 chars
+ * (the extension is kept when shortening). out needs 31 bytes. */
+void modland_local_name(const char *name, char *out);
+
+#endif

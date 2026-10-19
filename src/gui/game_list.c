@@ -16,6 +16,7 @@ void gl_free(gl_list *list)
     list->items = 0;
     list->text = 0;
     list->count = 0;
+    list->letter_on_dir = 0;
 }
 
 int gl_load(gl_list *list, const char *path, int format)
@@ -111,7 +112,7 @@ long gl_filter(const gl_list *list, const char *search, int letter, gl_entry **o
 
     for (i = 0; i < list->count; i++) {
         gl_entry *e = &list->items[i];
-        int first = (unsigned char)e->name[0];
+        int first = (unsigned char)((list->letter_on_dir && e->dir[0]) ? e->dir[0] : e->name[0]);
         if (letter == GL_LETTER_DIGITS) {
             if (first >= 'A' && first <= 'Z') continue;
             if (first >= 'a' && first <= 'z') continue;
