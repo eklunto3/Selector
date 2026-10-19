@@ -39,7 +39,7 @@ extern const char *WHDLOAD_FILE_FILTER_DAT_MAGAZINES;
 extern const char *DIR_DAT_FILES;
 
 size_t __stack = 131072;   /* same as whdfetch */
-static const char version[] = "$VER: WHDSelector 1.4 (19.10.2026)";
+static const char version[] = "$VER: WHDSelector 1.5 (19.10.2026)";
 
 struct Library *MUIMasterBase;
 
@@ -315,9 +315,12 @@ static void load_pack(void)
         get(cy_letter, MUIA_Cycle_Active, &letter);
         l = letter_value(letter);
         if (modland_category_split((int)pack) && l == GL_LETTER_ALL) {
-            need_letter = 1;
-            found = 0;
-        } else {
+            /* Too big for one list: start from authors beginning with A
+             * (nnset: no notification, so no second reload). */
+            nnset(cy_letter, MUIA_Cycle_Active, 2);
+            l = 'A';
+        }
+        {
             modland_list_path(engine_modland_dir(), (int)pack,
                               modland_category_split((int)pack) ? l : 0, list_file);
             found = gl_load(&games, list_file, GL_FMT_AMINET);
