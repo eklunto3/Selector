@@ -41,6 +41,7 @@ OBJS = $(patsubst src/%.c,$(OUT_DIR)/%.o,$(SRCS))
 GUI_BIN  = $(BIN_DIR)/WHDSelector
 # All of whdfetch except its main.c, compiled exactly like whdfetch.
 GUI_SRCS = src/gui/gui_main.c src/gui/game_list.c src/gui/engine.c src/gui/activity_log.c \
+           src/gui/inflate.c src/gui/aminet.c \
            $(filter-out src/main.c,$(SRCS))
 GUI_OBJS = $(patsubst src/%.c,$(OUT_DIR)/gui-obj/%.o,$(GUI_SRCS))
 GUI_CFLAGS = +aos68k -c99 -cpu=68000 -O2 -size \

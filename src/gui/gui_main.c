@@ -26,6 +26,7 @@
 #include "gamefile_parser.h"
 #include "gui/engine.h"
 #include "gui/activity_log.h"
+#include "gui/aminet.h"
 
 extern const char *WHDLOAD_FILE_FILTER_DAT_GAMES;
 extern const char *WHDLOAD_FILE_FILTER_DAT_GAMES_BETA_AND_UNRELEASED;
@@ -35,14 +36,14 @@ extern const char *WHDLOAD_FILE_FILTER_DAT_MAGAZINES;
 extern const char *DIR_DAT_FILES;
 
 size_t __stack = 131072;   /* same as whdfetch */
-static const char version[] = "$VER: WHDSelector 0.6 (19.10.2026)";
+static const char version[] = "$VER: WHDSelector 0.7 (19.10.2026)";
 
 struct Library *MUIMasterBase;
 
 #define MAKE_ID(a, b, c, d) ((ULONG)(a) << 24 | (ULONG)(b) << 16 | (ULONG)(c) << 8 | (ULONG)(d))
 
 enum { ID_PACK = 1, ID_SEARCH, ID_LETTER, ID_REFRESH, ID_DOWNLOAD, ID_STOP,
-       ID_SETTINGS, ID_SET_SAVE, ID_SET_CANCEL };
+       ID_SETTINGS, ID_SET_SAVE, ID_SET_CANCEL, ID_SOURCE };
 
 /* ---- packs ---- */
 
@@ -96,6 +97,18 @@ static gl_list games;
 static gl_entry **shown;
 static char list_file[256];
 
+/* ---- sources ---- */
+
+#define SRC_RETROPLAY 0
+#define SRC_AMINET    1
+static int source = SRC_RETROPLAY;
+static Object *cy_source, *grp_pages, *cy_cat, *str_amidir;
+
+static const char *source_labels[] = { "Retroplay WHDLoad", "Aminet", NULL };
+
+#define FORMAT_RETROPLAY "DELTA=16 W=55,DELTA=16 W=10,DELTA=16 W=25,P=\33r W=10"
+#define FORMAT_AMINET    "DELTA=16 W=22,DELTA=16 W=12,DELTA=16 P=\33r W=8,W=58"
+
 /* ---- NList display hook ---- */
 
 static void add_info(char *info, const char *part)
@@ -113,6 +126,27 @@ static ULONG display_func(__reg("a0") struct Hook *hook, __reg("a2") char **arra
     static char size_buf[16];
     static char info[300];
     static game_metadata meta;
+
+    if (source == SRC_AMINET) {
+        /* Aminet columns: name, category, size, description. */
+        if (!e) {
+            array[0] = "\33bName";
+            array[1] = "\33bCategory";
+            array[2] = "\33bSize";
+            array[3] = "\33bDescription";
+            return 0;
+        }
+        if (e->size >= 1024UL * 1024UL)
+            sprintf(size_buf, "%lu.%lu MB", e->size / (1024UL * 1024UL),
+                    (e->size % (1024UL * 1024UL)) * 10 / (1024UL * 1024UL));
+        else
+            sprintf(size_buf, "%lu KB", (e->size + 1023) / 1024);
+        array[0] = (char *)e->name;
+        array[1] = (char *)e->dir;
+        array[2] = size_buf;
+        array[3] = (char *)e->desc;
+        return 0;
+    }
 
     if (!e) {
         array[0] = "\33bTitle";
@@ -223,19 +257,39 @@ static void apply_filter(void)
 static void load_pack(void)
 {
     LONG pack = 0;
-    get(cy_pack, MUIA_Cycle_Active, &pack);
+    int found;
 
     free(shown);
     shown = NULL;
     gl_free(&games);
     list_file[0] = 0;
 
-    if (find_list_file(pack_filter((int)pack), list_file, sizeof(list_file)) &&
-        gl_load(&games, list_file)) {
+    if (source == SRC_AMINET) {
+        get(cy_cat, MUIA_Cycle_Active, &pack);
+        sprintf(list_file, "temp/Aminet/%s.txt", aminet_categories[pack]);
+        found = gl_load(&games, list_file, GL_FMT_AMINET);
+    } else {
+        get(cy_pack, MUIA_Cycle_Active, &pack);
+        found = find_list_file(pack_filter((int)pack), list_file, sizeof(list_file)) &&
+                gl_load(&games, list_file, GL_FMT_RETROPLAY);
+    }
+    if (found) {
         shown = (gl_entry **)malloc((size_t)(games.count + 1) * sizeof(gl_entry *));
         if (!shown) gl_free(&games);
     }
     apply_filter();
+}
+
+/* Switches between Retroplay and Aminet: category gadget, columns, list. */
+static void switch_source(void)
+{
+    LONG s = 0;
+    get(cy_source, MUIA_Cycle_Active, &s);
+    source = (int)s;
+    set(grp_pages, MUIA_Group_ActivePage, s);
+    set(lst, MUIA_NList_Format, (ULONG)(source == SRC_AMINET ? FORMAT_AMINET : FORMAT_RETROPLAY));
+    load_pack();
+    alog("Source: %s", source_labels[source]);
 }
 
 /* Downloads the latest DATs with whdfetch's own code (no games). */
@@ -250,11 +304,17 @@ static void refresh_lists(void)
         return;
     }
     set(app, MUIA_Application_Sleep, TRUE);
-    set_status("Fetching the latest lists...");
-    alog("Refresh: downloading index page and DAT files...");
     msg[0] = 0;
+    if (source == SRC_AMINET) {
+        set_status("Fetching the Aminet index (about 1.9 MB, this takes a while)...");
+        alog("Refresh: downloading Aminet INDEX.gz...");
+    } else {
+        set_status("Fetching the latest lists...");
+        alog("Refresh: downloading index page and DAT files...");
+    }
     alog_capture_begin();
-    if (!engine_refresh_lists(msg, sizeof(msg))) {
+    if (!(source == SRC_AMINET ? engine_refresh_aminet(msg, sizeof(msg))
+                               : engine_refresh_lists(msg, sizeof(msg)))) {
         alog_capture_end();
         alog("Refresh failed: %s", msg);
         set(app, MUIA_Application_Sleep, FALSE);
@@ -318,7 +378,8 @@ static void download_selected(void)
 
     set(bt_download, MUIA_Disabled, TRUE);
     set(bt_refresh, MUIA_Disabled, TRUE);
-    set(cy_pack, MUIA_Disabled, TRUE);
+    set(cy_source, MUIA_Disabled, TRUE);
+    set(grp_pages, MUIA_Disabled, TRUE);
     set(bt_stop, MUIA_Disabled, FALSE);
     set(gauge, MUIA_Gauge_Max, n);
     set(gauge, MUIA_Gauge_Current, 0);
@@ -332,7 +393,10 @@ static void download_selected(void)
         alog("Download %ld/%ld: %s (%lu KB)", i + 1, n, todo[i]->name,
              (todo[i]->size + 1023) / 1024);
         alog_capture_begin();
-        r = engine_install((int)pack, todo[i]->name, todo[i]->size, todo[i]->crc);
+        if (source == SRC_AMINET)
+            r = engine_install_aminet(todo[i]->dir, todo[i]->name);
+        else
+            r = engine_install((int)pack, todo[i]->name, todo[i]->size, todo[i]->crc);
         alog_capture_end();
         if (r == ENGINE_INSTALLED) { installed++; alog("OK: %s downloaded and extracted", todo[i]->name); }
         else if (r == ENGINE_SKIPPED) { skipped++; alog("Skipped: %s is already there", todo[i]->name); }
@@ -345,11 +409,13 @@ static void download_selected(void)
     set(bt_stop, MUIA_Disabled, TRUE);
     set(bt_download, MUIA_Disabled, FALSE);
     set(bt_refresh, MUIA_Disabled, FALSE);
-    set(cy_pack, MUIA_Disabled, FALSE);
+    set(cy_source, MUIA_Disabled, FALSE);
+    set(grp_pages, MUIA_Disabled, FALSE);
     free(todo);
 
     sprintf(status, "%s%d installed, %d already there, %d failed. Target: %.150s",
-            stopped ? "Stopped. " : "Done. ", installed, skipped, failed, engine_extract_target());
+            stopped ? "Stopped. " : "Done. ", installed, skipped, failed,
+            source == SRC_AMINET ? engine_aminet_target() : engine_extract_target());
     set_status(status);
     alog("%s", status);
 }
@@ -362,7 +428,7 @@ static Object *build_app(void)
         MUIA_Application_Title, (ULONG)"WHDSelector",
         MUIA_Application_Version, (ULONG)version,
         MUIA_Application_Copyright, (ULONG)"Personal use",
-        MUIA_Application_Description, (ULONG)"Browser for Retroplay WHDLoad packs",
+        MUIA_Application_Description, (ULONG)"Browser for Retroplay WHDLoad packs and Aminet",
         MUIA_Application_Base, (ULONG)"WHDSELECTOR",
 
         SubWindow, win = WindowObject,
@@ -371,9 +437,25 @@ static Object *build_app(void)
             WindowContents, VGroup,
 
                 Child, HGroup,
-                    Child, Label2("Pack:"),
-                    Child, cy_pack = CycleObject,
-                        MUIA_Cycle_Entries, (ULONG)pack_labels,
+                    Child, Label2("Source:"),
+                    Child, cy_source = CycleObject,
+                        MUIA_Cycle_Entries, (ULONG)source_labels,
+                    End,
+                    /* MUI 3.8 cycles cannot change their entries, so the
+                     * pack and category gadgets are two pages. */
+                    Child, grp_pages = PageGroup,
+                        Child, HGroup,
+                            Child, Label2("Pack:"),
+                            Child, cy_pack = CycleObject,
+                                MUIA_Cycle_Entries, (ULONG)pack_labels,
+                            End,
+                        End,
+                        Child, HGroup,
+                            Child, Label2("Category:"),
+                            Child, cy_cat = CycleObject,
+                                MUIA_Cycle_Entries, (ULONG)aminet_categories,
+                            End,
+                        End,
                     End,
                     Child, Label2("Letter:"),
                     Child, cy_letter = CycleObject,
@@ -394,7 +476,7 @@ static Object *build_app(void)
                     MUIA_CycleChain, 1,
                     MUIA_NListview_NList, lst = NListObject,
                         /* No bars; DELTA gives clear space between columns. */
-                        MUIA_NList_Format, (ULONG)"DELTA=16 W=55,DELTA=16 W=10,DELTA=16 W=25,P=\33r W=10",
+                        MUIA_NList_Format, (ULONG)FORMAT_RETROPLAY,
                         MUIA_NList_Title, TRUE,
                         MUIA_NList_DisplayHook, (ULONG)&display_hook,
                         MUIA_NList_Input, TRUE,
@@ -464,7 +546,26 @@ static Object *build_app(void)
                     End,
                 End,
 
-                Child, VGroup, GroupFrameT("List filters (applied on Refresh list)"),
+                Child, VGroup, GroupFrameT("Aminet"),
+                    Child, HGroup,
+                        Child, Label2("Install directory:"),
+                        Child, PopaslObject,
+                            MUIA_Popstring_String, str_amidir = StringObject,
+                                StringFrame,
+                                MUIA_String_MaxLen, 255,
+                                MUIA_CycleChain, 1,
+                            End,
+                            MUIA_Popstring_Button, PopButton(MUII_PopDrawer),
+                            ASLFR_TitleText, (ULONG)"Select Aminet install directory",
+                            ASLFR_DrawersOnly, TRUE,
+                        End,
+                    End,
+                    Child, TextObject,
+                        MUIA_Text_Contents, (ULONG)"\33cEach package goes to its own drawer. Empty = Aminet in the program directory",
+                    End,
+                End,
+
+                Child, VGroup, GroupFrameT("WHDLoad list filters (applied on Refresh list)"),
                     Child, ColGroup(4),
                         Child, cm_aga = CheckMark(FALSE),
                         Child, LLabel1("Hide AGA"),
@@ -494,6 +595,7 @@ static void open_settings(void)
     engine_settings s;
     engine_get_settings(&s);
     set(str_dir, MUIA_String_Contents, (ULONG)s.install_dir);
+    set(str_amidir, MUIA_String_Contents, (ULONG)s.aminet_dir);
     set(cm_delete, MUIA_Selected, s.delete_archives);
     set(cm_aga, MUIA_Selected, s.skip_aga);
     set(cm_cd, MUIA_Selected, s.skip_cd);
@@ -525,6 +627,15 @@ static void save_settings(void)
             if (last != ':' && last != '/') strcat(s.install_dir, "/");
         }
     }
+    dir = NULL;
+    get(str_amidir, MUIA_String_Contents, &dir);
+    if (dir) {
+        strncpy(s.aminet_dir, (const char *)dir, sizeof(s.aminet_dir) - 2);
+        if (s.aminet_dir[0]) {
+            char last = s.aminet_dir[strlen(s.aminet_dir) - 1];
+            if (last != ':' && last != '/') strcat(s.aminet_dir, "/");
+        }
+    }
     s.delete_archives = (int)checked(cm_delete);
     s.skip_aga = (int)checked(cm_aga);
     s.skip_cd = (int)checked(cm_cd);
@@ -545,6 +656,10 @@ static void setup_notifies(void)
              (ULONG)app, 2, MUIM_Application_ReturnID, MUIV_Application_ReturnID_Quit);
     DoMethod(cy_pack, MUIM_Notify, MUIA_Cycle_Active, MUIV_EveryTime,
              (ULONG)app, 2, MUIM_Application_ReturnID, ID_PACK);
+    DoMethod(cy_cat, MUIM_Notify, MUIA_Cycle_Active, MUIV_EveryTime,
+             (ULONG)app, 2, MUIM_Application_ReturnID, ID_PACK);
+    DoMethod(cy_source, MUIM_Notify, MUIA_Cycle_Active, MUIV_EveryTime,
+             (ULONG)app, 2, MUIM_Application_ReturnID, ID_SOURCE);
     DoMethod(cy_letter, MUIM_Notify, MUIA_Cycle_Active, MUIV_EveryTime,
              (ULONG)app, 2, MUIM_Application_ReturnID, ID_LETTER);
     DoMethod(str_search, MUIM_Notify, MUIA_String_Contents, MUIV_EveryTime,
@@ -626,6 +741,7 @@ int main(void)
         if (id == (LONG)MUIV_Application_ReturnID_Quit) break;
         switch (id) {
         case ID_PACK:     load_pack(); break;
+        case ID_SOURCE:   switch_source(); break;
         case ID_SEARCH:
         case ID_LETTER:   apply_filter(); break;
         case ID_REFRESH:  refresh_lists(); break;

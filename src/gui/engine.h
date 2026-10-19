@@ -24,6 +24,15 @@ int engine_refresh_lists(char *msg, int msg_len);
  * Demos, Demos beta, Magazines - the cycle gadget order). */
 int engine_install(int pack, const char *archive, unsigned long size, const char *crc);
 
+/* Aminet: downloads INDEX.gz, unpacks it and writes the category lists
+ * to temp/Aminet/<category>.txt. Returns 0 on failure. */
+int engine_refresh_aminet(char *msg, int msg_len);
+
+/* Downloads aminet.net/<dir>/<name> and extracts it with c:lha / c:unlzx
+ * into <Aminet target>/<name without extension>/. ENGINE_* result. */
+int engine_install_aminet(const char *dir, const char *name);
+const char *engine_aminet_target(void);
+
 /* Where extracted titles go, for the status line. */
 const char *engine_extract_target(void);
 
@@ -34,6 +43,7 @@ typedef struct {
     char install_dir[256];   /* "" = whdfetch default (GameFiles/...) */
     int delete_archives;
     int skip_aga, skip_cd, skip_ntsc, skip_non_english;
+    char aminet_dir[256];    /* "" = Aminet/ in the program directory */
 } engine_settings;
 
 void engine_get_settings(engine_settings *s);

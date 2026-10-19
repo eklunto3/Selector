@@ -18,7 +18,7 @@ void gl_free(gl_list *list)
     list->count = 0;
 }
 
-int gl_load(gl_list *list, const char *path)
+int gl_load(gl_list *list, const char *path, int format)
 {
     FILE *f;
     long size, lines = 0, i;
@@ -48,22 +48,34 @@ int gl_load(gl_list *list, const char *path)
     list->items = (gl_entry *)malloc((size_t)lines * sizeof(gl_entry));
     if (!list->items) { gl_free(list); return 0; }
 
-    /* Split in place: name<TAB>size<TAB>crc, or just name. */
+    /* Split each line in place at its tabs. */
     p = list->text;
     while (*p) {
         char *eol = strchr(p, '\n');
-        char *tab;
+        char *field[4];
+        int nf = 0;
         if (eol) *eol = 0;
         if (eol && eol > p && eol[-1] == '\r') eol[-1] = 0;
-        tab = strchr(p, '\t');
-        if (tab) *tab = 0;
+        field[nf++] = p;
+        while (nf < 4) {
+            char *tab = strchr(field[nf - 1], '\t');
+            if (!tab) break;
+            *tab = 0;
+            field[nf++] = tab + 1;
+        }
         if (*p) {
             gl_entry *e = &list->items[list->count];
-            char *tab2 = tab ? strchr(tab + 1, '\t') : 0;
-            if (tab2) *tab2 = 0;
-            e->name = p;
-            e->size = tab ? strtoul(tab + 1, 0, 10) : 0;
-            e->crc = tab2 ? tab2 + 1 : "";
+            e->name = field[0];
+            e->crc = e->dir = e->desc = "";
+            e->size = 0;
+            if (format == GL_FMT_AMINET) {
+                if (nf > 1) e->dir = field[1];
+                if (nf > 2) e->size = strtoul(field[2], 0, 10);
+                if (nf > 3) e->desc = field[3];
+            } else {
+                if (nf > 1) e->size = strtoul(field[1], 0, 10);
+                if (nf > 2) e->crc = field[2];
+            }
             list->count++;
         }
         if (!eol) break;
@@ -104,7 +116,7 @@ long gl_filter(const gl_list *list, const char *search, int letter, gl_entry **o
         } else if (letter != GL_LETTER_ALL) {
             if (lower(first) != lower(letter)) continue;
         }
-        if (!contains(e->name, needle)) continue;
+        if (!contains(e->name, needle) && !contains(e->desc, needle)) continue;
         out[n++] = e;
     }
     return n;
