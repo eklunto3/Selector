@@ -37,7 +37,7 @@ extern const char *WHDLOAD_FILE_FILTER_DAT_MAGAZINES;
 extern const char *DIR_DAT_FILES;
 
 size_t __stack = 131072;   /* same as whdfetch */
-static const char version[] = "$VER: WHDSelector 1.1 (19.10.2026)";
+static const char version[] = "$VER: WHDSelector 1.2 (19.10.2026)";
 
 struct Library *MUIMasterBase;
 
@@ -759,6 +759,7 @@ int main(void)
     }
 
     alog_init(lst_log);
+    alog("WHDSelector by HiFi - enjoy the usage!");
     alog("%s started", version + 6);
 
     /* Without a network the lists can still be browsed (E-05). */
