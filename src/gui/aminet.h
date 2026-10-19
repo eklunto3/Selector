@@ -15,9 +15,20 @@ extern const char *aminet_categories[AMINET_NUM_CATEGORIES + 1];  /* NULL-termin
 /* "671K" / "9.5M" -> bytes. */
 unsigned long aminet_parse_size(const char *s);
 
+#define AMINET_RECENT_URL "http://aminet.net/RECENT"   /* last ~14 days */
+
 /* Splits an uncompressed INDEX into out_dir/<category>.txt with lines
- * "name<TAB>dir<TAB>bytes<TAB>description". Returns the number of
- * packages, or -1 on a file error. */
+ * "name<TAB>dir<TAB>bytes<TAB>age_weeks<TAB>description". Returns the
+ * number of packages, or -1 on a file error. */
 long aminet_split_index(const char *index_path, const char *out_dir);
+
+/* Converts a whole INDEX-format file (e.g. RECENT) to one list file in
+ * the same format. Returns the number of packages or -1. */
+long aminet_convert_list(const char *in_path, const char *out_path);
+
+/* The INDEX "age" column is in weeks (999 = 19 years or more; checked
+ * against package dates 2026-10-19). "this week", "3 weeks", "11 months",
+ * "2 years", "19+ years". buf needs 16 bytes. */
+const char *aminet_age_text(unsigned int weeks, char *buf);
 
 #endif

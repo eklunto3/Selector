@@ -3,7 +3,7 @@
 
 /* Package list of one pack/category, read from tab-separated text files:
  *   Retroplay (whdfetch's DAT phase): name<TAB>size<TAB>crc
- *   Aminet (aminet_split_index):      name<TAB>dir<TAB>size<TAB>description */
+ *   Aminet (aminet_split_index):      name<TAB>dir<TAB>size<TAB>age<TAB>description */
 
 #define GL_FMT_RETROPLAY 0
 #define GL_FMT_AMINET    1
@@ -14,6 +14,7 @@ typedef struct {
     const char *crc;      /* CRC-32 hex (Retroplay), "" otherwise */
     const char *dir;      /* Aminet directory, e.g. "util/arc"; "" otherwise */
     const char *desc;     /* Aminet short description; "" otherwise */
+    unsigned short age;   /* Aminet age in weeks (999 = 19+ years); 0 otherwise */
 } gl_entry;
 
 typedef struct {

@@ -36,7 +36,7 @@ extern const char *WHDLOAD_FILE_FILTER_DAT_MAGAZINES;
 extern const char *DIR_DAT_FILES;
 
 size_t __stack = 131072;   /* same as whdfetch */
-static const char version[] = "$VER: WHDSelector 0.8 (19.10.2026)";
+static const char version[] = "$VER: WHDSelector 0.9 (19.10.2026)";
 
 struct Library *MUIMasterBase;
 
@@ -107,7 +107,19 @@ static Object *cy_source, *grp_pages, *cy_cat, *str_amidir;
 static const char *source_labels[] = { "Retroplay WHDLoad", "Aminet", NULL };
 
 #define FORMAT_RETROPLAY "DELTA=16 W=55,DELTA=16 W=10,DELTA=16 W=25,P=\33r W=10"
-#define FORMAT_AMINET    "DELTA=16 W=22,DELTA=16 W=12,DELTA=16 P=\33r W=8,W=58"
+#define FORMAT_AMINET    "DELTA=16 W=20,DELTA=16 W=11,DELTA=16 P=\33r W=7,DELTA=16 W=9,W=53"
+
+/* Aminet "category" gadget: Recent first (the default view, like the
+ * Aminet front page), then the 16 top-level categories. */
+static const char *cat_labels[AMINET_NUM_CATEGORIES + 2];
+
+static void init_cat_labels(void)
+{
+    int i;
+    cat_labels[0] = "Recent (last 14 days)";
+    for (i = 0; i < AMINET_NUM_CATEGORIES; i++) cat_labels[i + 1] = aminet_categories[i];
+    cat_labels[AMINET_NUM_CATEGORIES + 1] = NULL;
+}
 
 /* ---- NList display hook ---- */
 
@@ -128,12 +140,14 @@ static ULONG display_func(__reg("a0") struct Hook *hook, __reg("a2") char **arra
     static game_metadata meta;
 
     if (source == SRC_AMINET) {
-        /* Aminet columns: name, category, size, description. */
+        /* Aminet columns: name, category, size, age, description. */
+        static char age_buf[16];
         if (!e) {
             array[0] = "\33bName";
             array[1] = "\33bCategory";
             array[2] = "\33bSize";
-            array[3] = "\33bDescription";
+            array[3] = "\33bAge";
+            array[4] = "\33bDescription";
             return 0;
         }
         if (e->size >= 1024UL * 1024UL)
@@ -144,7 +158,8 @@ static ULONG display_func(__reg("a0") struct Hook *hook, __reg("a2") char **arra
         array[0] = (char *)e->name;
         array[1] = (char *)e->dir;
         array[2] = size_buf;
-        array[3] = (char *)e->desc;
+        array[3] = (char *)aminet_age_text(e->age, age_buf);
+        array[4] = (char *)e->desc;
         return 0;
     }
 
@@ -266,7 +281,8 @@ static void load_pack(void)
 
     if (source == SRC_AMINET) {
         get(cy_cat, MUIA_Cycle_Active, &pack);
-        sprintf(list_file, "temp/Aminet/%s.txt", aminet_categories[pack]);
+        if (pack == 0) strcpy(list_file, "temp/Aminet/recent.txt");
+        else sprintf(list_file, "temp/Aminet/%s.txt", aminet_categories[pack - 1]);
         found = gl_load(&games, list_file, GL_FMT_AMINET);
     } else {
         get(cy_pack, MUIA_Cycle_Active, &pack);
@@ -453,7 +469,7 @@ static Object *build_app(void)
                         Child, HGroup,
                             Child, Label2("Category:"),
                             Child, cy_cat = CycleObject,
-                                MUIA_Cycle_Entries, (ULONG)aminet_categories,
+                                MUIA_Cycle_Entries, (ULONG)cat_labels,
                             End,
                         End,
                     End,
@@ -693,6 +709,7 @@ int main(void)
      * directory; run from there whether started from Shell or Workbench. */
     old_dir = CurrentDir(GetProgramDir());
     init_letters();
+    init_cat_labels();
     MUIMasterBase = OpenLibrary((STRPTR)MUIMASTER_NAME, 19);
     if (!MUIMasterBase) {
         printf("WHDSelector needs MUI 3.8 or newer (muimaster.library v19).\n");

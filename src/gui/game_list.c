@@ -52,12 +52,12 @@ int gl_load(gl_list *list, const char *path, int format)
     p = list->text;
     while (*p) {
         char *eol = strchr(p, '\n');
-        char *field[4];
+        char *field[5];
         int nf = 0;
         if (eol) *eol = 0;
         if (eol && eol > p && eol[-1] == '\r') eol[-1] = 0;
         field[nf++] = p;
-        while (nf < 4) {
+        while (nf < 5) {
             char *tab = strchr(field[nf - 1], '\t');
             if (!tab) break;
             *tab = 0;
@@ -68,10 +68,12 @@ int gl_load(gl_list *list, const char *path, int format)
             e->name = field[0];
             e->crc = e->dir = e->desc = "";
             e->size = 0;
+            e->age = 0;
             if (format == GL_FMT_AMINET) {
                 if (nf > 1) e->dir = field[1];
                 if (nf > 2) e->size = strtoul(field[2], 0, 10);
-                if (nf > 3) e->desc = field[3];
+                if (nf > 3) e->age = (unsigned short)strtoul(field[3], 0, 10);
+                if (nf > 4) e->desc = field[4];
             } else {
                 if (nf > 1) e->size = strtoul(field[1], 0, 10);
                 if (nf > 2) e->crc = field[2];

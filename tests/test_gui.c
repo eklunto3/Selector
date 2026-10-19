@@ -39,6 +39,32 @@ int main(int argc, char **argv)
     CHECK(aminet_parse_size("0K") == 0);
     CHECK(aminet_parse_size("9.5M") == 9UL * 1048576 + 1048576 / 2);
     CHECK(inflate_crc32(0, (const unsigned char *)"123456789", 9) == 0xCBF43926UL);
+    {
+        char b[16];
+        CHECK(strcmp(aminet_age_text(0, b), "this week") == 0);
+        CHECK(strcmp(aminet_age_text(3, b), "3 weeks") == 0);
+        CHECK(strcmp(aminet_age_text(52, b), "12 months") == 0);
+        CHECK(strcmp(aminet_age_text(300, b), "5 years") == 0);
+        CHECK(strcmp(aminet_age_text(999, b), "19+ years") == 0);
+    }
+    {
+        /* RECENT has the INDEX line format. */
+        FILE *f;
+        gl_list r = { 0, 0, 0 };
+        sprintf(path, "%s/RECENT", argv[1]);
+        f = fopen(path, "w");
+        fputs("|\n| Aminet index, created on 19-Oct-2026\n|\n\n"
+              "amisync.lha                    comm/net   473K   0 Syncthing-compatible file sync daemon\n"
+              "openlara.lha                   game/shoot  27M   0 Tomb Raider - OpenLara\n", f);
+        fclose(f);
+        sprintf(out, "%s/recent.txt", argv[1]);
+        CHECK(aminet_convert_list(path, out) == 2);
+        CHECK(gl_load(&r, out, GL_FMT_AMINET) && r.count == 2);
+        CHECK(r.count == 2 && strcmp(r.items[1].dir, "game/shoot") == 0 &&
+              r.items[1].size == 27UL * 1048576 && r.items[1].age == 0 &&
+              strcmp(r.items[1].desc, "Tomb Raider - OpenLara") == 0);
+        gl_free(&r);
+    }
 
     sprintf(out, "%s/INDEX", argv[1]);
     CHECK(inflate_gunzip_file(argv[2], out) == IF_OK);
@@ -59,6 +85,7 @@ int main(int argc, char **argv)
             CHECK(strcmp(list.items[i].dir, "biz/dbase") == 0);
             CHECK(list.items[i].size == 279UL * 1024);
             CHECK(strncmp(list.items[i].desc, "ULTIMATE Amiga Address Book", 27) == 0);
+            CHECK(list.items[i].age == 999);
         }
     CHECK(found_aaa);
 

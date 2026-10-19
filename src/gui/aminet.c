@@ -46,6 +46,70 @@ static char *token(char *p, char **start)
     return p;
 }
 
+/* Splits one INDEX/RECENT line "name dir size age description".
+ * Returns 0 for header and malformed lines. */
+static int parse_line(char *line, char **name, char **dir, char **size, char **age, char **desc)
+{
+    char *p;
+    size_t n = strlen(line);
+    while (n > 0 && (line[n - 1] == '\n' || line[n - 1] == '\r')) line[--n] = 0;
+    if (line[0] == '|' || line[0] == 0) return 0;     /* header */
+    p = token(line, name);
+    p = token(p, dir);
+    p = token(p, size);
+    p = token(p, age);
+    while (*p == ' ' || *p == '\t') p++;
+    *desc = p;
+    return **name && **dir && **size && **age;
+}
+
+static void write_entry(FILE *f, const char *name, const char *dir, const char *size,
+                        const char *age, const char *desc)
+{
+    fprintf(f, "%s\t%s\t%lu\t%ld\t%s\n", name, dir, aminet_parse_size(size),
+            strtol(age, 0, 10), desc);
+}
+
+long aminet_convert_list(const char *in_path, const char *out_path)
+{
+    char line[512], tmp[300];
+    FILE *in, *out;
+    long count = 0;
+    int ok;
+
+    if (strlen(out_path) + 5 > sizeof(tmp)) return -1;
+    sprintf(tmp, "%s.tmp", out_path);
+    in = fopen(in_path, "r");
+    if (!in) return -1;
+    out = fopen(tmp, "w");
+    if (!out) { fclose(in); return -1; }
+    while (fgets(line, sizeof(line), in)) {
+        char *name, *dir, *size, *age, *desc;
+        if (!parse_line(line, &name, &dir, &size, &age, &desc)) continue;
+        write_entry(out, name, dir, size, age, desc);
+        count++;
+    }
+    fclose(in);
+    ok = fclose(out) == 0;
+    if (ok) {
+        remove(out_path);
+        ok = rename(tmp, out_path) == 0;
+    }
+    if (!ok) { remove(tmp); return -1; }
+    return count;
+}
+
+const char *aminet_age_text(unsigned int weeks, char *buf)
+{
+    if (weeks == 0) strcpy(buf, "this week");
+    else if (weeks == 1) strcpy(buf, "1 week");
+    else if (weeks < 9) sprintf(buf, "%u weeks", weeks);
+    else if (weeks < 104) sprintf(buf, "%u months", (weeks * 7 + 15) / 30);
+    else if (weeks >= 999) strcpy(buf, "19+ years");
+    else sprintf(buf, "%u years", weeks / 52);
+    return buf;
+}
+
 long aminet_split_index(const char *index_path, const char *out_dir)
 {
     FILE *in, *out[AMINET_NUM_CATEGORIES];
@@ -62,22 +126,12 @@ long aminet_split_index(const char *index_path, const char *out_dir)
     }
 
     while (ok && fgets(line, sizeof(line), in)) {
-        char *name, *dir, *size, *age, *desc, *p;
-        size_t n = strlen(line);
+        char *name, *dir, *size, *age, *desc;
         int cat;
-        while (n > 0 && (line[n - 1] == '\n' || line[n - 1] == '\r')) line[--n] = 0;
-        if (line[0] == '|' || line[0] == 0) continue;     /* header */
-
-        p = token(line, &name);
-        p = token(p, &dir);
-        p = token(p, &size);
-        p = token(p, &age);
-        while (*p == ' ' || *p == '\t') p++;
-        desc = p;
-        if (!*name || !*dir || !*size || !age) continue;
+        if (!parse_line(line, &name, &dir, &size, &age, &desc)) continue;
         cat = category_index(dir);
         if (cat < 0) continue;
-        fprintf(out[cat], "%s\t%s\t%lu\t%s\n", name, dir, aminet_parse_size(size), desc);
+        write_entry(out[cat], name, dir, size, age, desc);
         count++;
     }
     fclose(in);

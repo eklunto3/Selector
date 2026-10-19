@@ -338,6 +338,21 @@ int engine_refresh_aminet(char *msg, int msg_len)
     sprintf(gz, "%s/INDEX.gz", AMINET_DIR);
     sprintf(index, "%s/INDEX", AMINET_DIR);
 
+    /* RECENT first: small (about 10 KB) and the default view. */
+    {
+        char raw[64], list[64];
+        sprintf(raw, "%s/RECENT", AMINET_DIR);
+        sprintf(list, "%s/recent.txt", AMINET_DIR);
+        printf("Downloading %s\n", AMINET_RECENT_URL);
+        if (ad_download_http_file_with_retries(AMINET_RECENT_URL, raw, TRUE) == AD_SUCCESS) {
+            count = aminet_convert_list(raw, list);
+            printf("Recent uploads: %ld packages\n", count);
+            DeleteFile((STRPTR)raw);
+        } else {
+            printf("Could not download RECENT, continuing with INDEX.gz\n");
+        }
+    }
+
     printf("Downloading %s\n", AMINET_INDEX_URL);
     if (ad_download_http_file_with_retries(AMINET_INDEX_URL, gz, TRUE) != AD_SUCCESS) {
         set_msg(msg, msg_len, "Could not download the Aminet index (INDEX.gz).");
