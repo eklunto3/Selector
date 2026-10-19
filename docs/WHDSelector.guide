@@ -1,0 +1,214 @@
+@database WHDSelector.guide
+@author "HiFi"
+@$VER: WHDSelector.guide 1.9 (19.10.2026)
+@wordwrap
+
+@node Main "WHDSelector"
+
+                         @{b}WHDSelector@{ub}
+                    by HiFi - enjoy the usage!
+
+  WHDSelector browses, downloads, installs and plays software from three
+  sources, all in one MUI window:
+
+    - Retroplay WHDLoad packs (games, demos, magazines)
+    - Aminet
+    - Modland music modules (Amiga formats)
+
+  @{" Requirements          " link Requirements}
+  @{" Installation          " link Install}
+  @{" The main window       " link Window}
+  @{" Retroplay WHDLoad     " link Retroplay}
+  @{" Aminet                " link Aminet}
+  @{" Modland music         " link Modland}
+  @{" Playing music         " link Playing}
+  @{" Settings              " link Settings}
+  @{" History and log       " link History}
+  @{" Menus                 " link Menus}
+  @{" Files                 " link Files}
+  @{" Credits               " link Credits}
+@endnode
+
+@node Requirements "Requirements"
+@{b}Requirements@{ub}
+
+  - AmigaOS 3.1 or newer, 68000 or better (68020+ recommended)
+  - MUI 3.8 or newer and NList.mcc
+  - A TCP/IP stack with bsdsocket.library (Miami, Roadshow, AmiTCP)
+  - C:lha (and C:unlzx for .lzx, unzip for .zip archives)
+  - HippoPlayer for playing music (optional)
+
+  Downloads use plain HTTP; no SSL library is needed.
+@endnode
+
+@node Install "Installation"
+@{b}Installation@{ub}
+
+  Copy WHDSelector and WHDSelector.guide into one drawer, for example
+  Work:WHDSelector. Everything WHDSelector writes stays in that drawer
+  unless you choose other directories in @{"Settings" link Settings}:
+
+    temp/          downloaded lists (WHDLoad DATs, Aminet, Modland)
+    GameFiles/     WHDLoad archives and installs (default)
+    Aminet/        Aminet packages (default)
+    Music/         Modland modules (default)
+
+  Start WHDSelector from Workbench or Shell. Put your TCP/IP stack
+  online first; if it is offline, WHDSelector still opens and you can
+  browse lists already downloaded. It connects when you press
+  @{b}Refresh list@{ub} or @{b}Download selected@{ub}.
+@endnode
+
+@node Window "The main window"
+@{b}The main window@{ub}
+
+  @{b}Source@{ub}     Retroplay WHDLoad, Aminet or Modland (music).
+  @{b}Pack / Category / Format@{ub}
+             What part of the source is listed.
+  @{b}Letter@{ub}     Shows only names starting with a letter (Modland: the
+             author's initial).
+  @{b}Search@{ub}     Filters the list while you type (Modland "All
+             formats": type and press Return to search everything).
+
+  @{b}Browse@{ub} tab   the list. Select several rows with Shift or Ctrl and
+               a click.
+  @{b}History@{ub} tab  what was downloaded and when, newest first.
+
+  @{b}Download selected@{ub}  downloads and installs the selected rows.
+  @{b}Play@{ub}               plays the selected Modland module.
+  @{b}Stop@{ub}               stops after the title being downloaded.
+  @{b}Refresh list@{ub}       fetches the newest list for the current source.
+  @{b}Settings...@{ub}        directories, filters and HippoPlayer.
+
+  The status line and the log at the bottom tell what is going on.
+@endnode
+
+@node Retroplay "Retroplay WHDLoad"
+@{b}Retroplay WHDLoad@{ub}
+
+  Packs: Games, Games (Beta & Unofficial), Demos, Demos (Beta &
+  Unofficial) and Magazines. Columns: title, version, information
+  (AGA, NTSC, language...) and size.
+
+  Downloading and extracting is done by the built-in whdfetch engine, so
+  archives and drawers are exactly as whdfetch makes them. Titles that are
+  already downloaded or extracted are skipped.
+
+  Note: the server allows 500 files (100 GiB) per 7 days over HTTP.
+@endnode
+
+@node Aminet "Aminet"
+@{b}Aminet@{ub}
+
+  The first category, @{b}Recent (last 14 days)@{ub}, shows the newest
+  uploads. The other categories are Aminet's top-level directories.
+  Columns: name, category, size, age and description. Search also matches
+  descriptions.
+
+  Archives (.lha, .lzh, .lzx, .zip) are extracted into a drawer of their
+  own: <Aminet directory>/<name>/. Other files (DMS and ADF disk images,
+  pictures, music, documents) are saved there as they are.
+@endnode
+
+@node Modland "Modland music"
+@{b}Modland music@{ub}
+
+  Modland holds almost 100,000 modules in formats that play on an Amiga:
+  Protracker, Soundtracker, Startrekker, OctaMED, AHX, HivelyTracker,
+  Future Composer, TFMX, DigiBooster, Musicline, Oktalyzer, Art Of Noise,
+  BP SoundMon, Sonic Arranger, SidMon, Delta Music, Digital Mugician,
+  JamCracker, Symphonie and DeliTracker Custom.
+
+  @{b}All formats@{ub} (first Format entry) lists every format by the
+  author's initial. Type a song or an author into Search and press
+  Return to search all formats, for example "space debris".
+
+  Modules are saved as <Music directory>/<author>/<module>. Spaces become
+  "_" and names are shortened to 30 characters for the FFS file system.
+
+  Some formats use two files (for example TFMX mdat.* and smpl.*); select
+  both.
+@endnode
+
+@node Playing "Playing music"
+@{b}Playing music@{ub}
+
+  Select a Modland module and press @{b}Play@{ub}, or double-click it.
+  WHDSelector downloads it if needed and plays it in HippoPlayer through
+  HippoPlayer's ARexx port. If HippoPlayer is not running, it is started
+  from the path given in @{"Settings" link Settings}.
+
+  Whether a format plays depends on HippoPlayer and the player libraries
+  you have installed (for example OctaMED modules may need medplayer
+  libraries).
+@endnode
+
+@node Settings "Settings"
+@{b}Settings@{ub}
+
+  @{b}Install directory@{ub}   where WHDLoad titles are extracted.
+  @{b}Delete archives@{ub}     remove the archive after extracting.
+  @{b}Aminet directory@{ub}    where Aminet packages go.
+  @{b}Music directory@{ub}     where Modland modules go.
+  @{b}HippoPlayer@{ub}         the HippoPlayer program, used to start it.
+  @{b}WHDLoad filters@{ub}     hide AGA, CD32/CDTV, NTSC or non-English
+                      titles (used on the next Refresh list).
+
+  Settings are saved in whdfetch.ini next to the program, so the
+  whdfetch command line tool uses the same directories.
+
+  @{b}MUI settings...@{ub} in the Project menu changes fonts, colours and
+  the look of WHDSelector's window.
+@endnode
+
+@node History "History and log"
+@{b}History and log@{ub}
+
+  The @{b}History@{ub} tab lists every downloaded title with date, time,
+  source and target directory. It is stored in WHDSelector.history;
+  @{b}Clear history@{ub} empties it (the files themselves stay).
+
+  The log at the bottom of the window shows what WHDSelector does,
+  including the messages of whdfetch and the extractors. It is also
+  written to WHDSelector.log.
+@endnode
+
+@node Menus "Menus"
+@{b}Menus@{ub}
+
+  @{b}Project@{ub}
+    About...          version and credits
+    About MUI...      MUI information
+    Manual...         this guide
+    Settings...       the settings window
+    MUI settings...   MUI preferences for WHDSelector
+    Quit
+
+  @{b}Edit@{ub}
+    Copy              copies the names of the selected rows
+    Paste             pastes clipboard text into Search
+    Select all        selects every row of the list
+@endnode
+
+@node Files "Files"
+@{b}Files@{ub}
+
+  WHDSelector              the program
+  WHDSelector.guide        this manual
+  whdfetch.ini             settings (shared with whdfetch)
+  WHDSelector.log          activity log (kept below 256 KB)
+  WHDSelector.history      download history
+  temp/                    downloaded lists and indexes
+@endnode
+
+@node Credits "Credits"
+@{b}Credits@{ub}
+
+  WHDSelector by HiFi.
+
+  Download and extraction engine: whdfetch by Kwezza.
+  MUI by Stefan Stuntz, NList by Gilles Masson and the NList team.
+  Lists: Retroplay WHDLoad packs (Turran FTP), Aminet, Modland.
+
+  Personal use.
+@endnode

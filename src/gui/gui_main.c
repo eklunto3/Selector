@@ -16,6 +16,8 @@
 #include <dos/dostags.h>
 #include <libraries/mui.h>
 #include <libraries/asl.h>
+#include <libraries/gadtools.h>
+#include <time.h>
 #include <mui/NListview_mcc.h>
 #include <proto/exec.h>
 #include <proto/dos.h>
@@ -30,6 +32,7 @@
 #include "gui/aminet.h"
 #include "gui/modland.h"
 #include "gui/hippo.h"
+#include "gui/clip.h"
 #include "gui/logo_data.h"
 
 extern const char *WHDLOAD_FILE_FILTER_DAT_GAMES;
@@ -40,14 +43,14 @@ extern const char *WHDLOAD_FILE_FILTER_DAT_MAGAZINES;
 extern const char *DIR_DAT_FILES;
 
 size_t __stack = 131072;   /* same as whdfetch */
-static const char version[] = "$VER: WHDSelector 1.8 (19.10.2026)";
+static const char version[] = "$VER: WHDSelector 1.9 (19.10.2026)";
 
 struct Library *MUIMasterBase;
 
 #define MAKE_ID(a, b, c, d) ((ULONG)(a) << 24 | (ULONG)(b) << 16 | (ULONG)(c) << 8 | (ULONG)(d))
 
 enum { ID_PACK = 1, ID_SEARCH, ID_LETTER, ID_REFRESH, ID_DOWNLOAD, ID_STOP,
-       ID_SETTINGS, ID_SET_SAVE, ID_SET_CANCEL, ID_SOURCE, ID_PLAY, ID_DCLICK, ID_SEARCH_GO };
+       ID_SETTINGS, ID_SET_SAVE, ID_SET_CANCEL, ID_SOURCE, ID_PLAY, ID_DCLICK, ID_SEARCH_GO, ID_HIST_CLEAR };
 
 /* ---- packs ---- */
 
@@ -94,6 +97,10 @@ static int letter_value(LONG active)
 
 static Object *app, *win, *cy_pack, *str_search, *cy_letter, *lv_list, *lst, *txt_status, *bt_refresh;
 static Object *bt_download, *bt_stop, *gauge, *bt_settings, *lst_log, *bt_play, *str_player;
+static Object *lst_hist, *bt_hist_clear;
+static void history_add(const char *source_name, const char *name, const char *target);
+static const char *source_short(void);
+static const char *current_target(void);
 static Object *win_set, *str_dir, *cm_delete, *cm_aga, *cm_cd, *cm_ntsc, *cm_eng, *bt_save, *bt_cancel;
 static int engine_ok, quit_after_download;
 static char engine_msg[120];
@@ -571,7 +578,11 @@ static void download_selected(void)
         else
             r = engine_install((int)pack, todo[i]->name, todo[i]->size, todo[i]->crc);
         alog_capture_end();
-        if (r == ENGINE_INSTALLED) { installed++; alog("OK: %s downloaded and extracted", todo[i]->name); }
+        if (r == ENGINE_INSTALLED) {
+            installed++;
+            alog("OK: %s downloaded and extracted", todo[i]->name);
+            history_add(source_short(), todo[i]->name, current_target());
+        }
         else if (r == ENGINE_SKIPPED) { skipped++; alog("Skipped: %s is already there", todo[i]->name); }
         else if (r == ENGINE_CANCELLED) { stopped = 1; alog("Cancelled: %s", todo[i]->name); break; }
         else { failed++; alog("FAILED: %s (see lines above)", todo[i]->name); }
@@ -624,6 +635,7 @@ static void play_selected(void)
         alog("Download: %s (%lu KB)", e->name, (e->size + 1023) / 1024);
         alog_capture_begin();
         r = engine_install_modland(e->desc, e->dir, e->name);
+        if (r == ENGINE_INSTALLED) history_add("Modland", e->name, engine_modland_target());
         alog_capture_end();
         set(app, MUIA_Application_Sleep, FALSE);
         if ((r != ENGINE_INSTALLED && r != ENGINE_SKIPPED) ||
@@ -646,6 +658,174 @@ static void play_selected(void)
 
 /* ---- setup ---- */
 
+/* ---- menus ---- */
+
+enum { MEN_ABOUT = 200, MEN_ABOUTMUI, MEN_MANUAL, MEN_SETTINGS, MEN_MUIPREFS,
+       MEN_COPY, MEN_PASTE, MEN_SELALL };
+
+static struct NewMenu main_menu[] = {
+    { NM_TITLE, (STRPTR)"Project",          0,          0, 0, 0 },
+    { NM_ITEM,  (STRPTR)"About...",         (STRPTR)"?", 0, 0, (APTR)MEN_ABOUT },
+    { NM_ITEM,  (STRPTR)"About MUI...",     0,          0, 0, (APTR)MEN_ABOUTMUI },
+    { NM_ITEM,  (STRPTR)"Manual...",        (STRPTR)"H", 0, 0, (APTR)MEN_MANUAL },
+    { NM_ITEM,  NM_BARLABEL,                0,          0, 0, 0 },
+    { NM_ITEM,  (STRPTR)"Settings...",      (STRPTR)"S", 0, 0, (APTR)MEN_SETTINGS },
+    { NM_ITEM,  (STRPTR)"MUI settings...",  0,          0, 0, (APTR)MEN_MUIPREFS },
+    { NM_ITEM,  NM_BARLABEL,                0,          0, 0, 0 },
+    { NM_ITEM,  (STRPTR)"Quit",             (STRPTR)"Q", 0, 0, (APTR)MUIV_Application_ReturnID_Quit },
+    { NM_TITLE, (STRPTR)"Edit",             0,          0, 0, 0 },
+    { NM_ITEM,  (STRPTR)"Copy",             (STRPTR)"C", 0, 0, (APTR)MEN_COPY },
+    { NM_ITEM,  (STRPTR)"Paste",            (STRPTR)"V", 0, 0, (APTR)MEN_PASTE },
+    { NM_ITEM,  (STRPTR)"Select all",       (STRPTR)"A", 0, 0, (APTR)MEN_SELALL },
+    { NM_END,   0,                          0,          0, 0, 0 }
+};
+
+static const char *register_titles[] = { "Browse", "History", NULL };
+
+static void show_about(void)
+{
+    MUI_Request(app, win, 0, (char *)"About WHDSelector", (char *)"*_OK",
+                (char *)"\33c\33b%s\33n\n\n"
+                "by HiFi - enjoy the usage!\n\n"
+                "Browse, download and play from\n"
+                "Retroplay WHDLoad packs, Aminet and Modland.\n\n"
+                "Downloading and extraction: whdfetch by Kwezza\n"
+                "MUI by Stefan Stuntz, NList by Gilles Masson\n\n"
+                "Personal use.",
+                (ULONG)(version + 6));
+}
+
+/* Opens PROGDIR:WHDSelector.guide in MultiView (asynchronously). */
+static void open_manual(void)
+{
+    char path[300], cmd[400];
+    BPTR lock = Lock((STRPTR)"PROGDIR:WHDSelector.guide", ACCESS_READ);
+    BPTR in, out;
+    if (!lock) {
+        set_status("WHDSelector.guide not found next to the program.");
+        return;
+    }
+    NameFromLock(lock, (STRPTR)path, sizeof(path));
+    UnLock(lock);
+    sprintf(cmd, "SYS:Utilities/MultiView \"%s\"", path);
+    in = Open((STRPTR)"NIL:", MODE_OLDFILE);
+    out = Open((STRPTR)"NIL:", MODE_NEWFILE);
+    if (!in || !out || SystemTags((STRPTR)cmd, SYS_Input, (ULONG)in, SYS_Output, (ULONG)out,
+                                  SYS_Asynch, TRUE, TAG_DONE) == -1) {
+        if (in) Close(in);
+        if (out) Close(out);
+        set_status("Could not start SYS:Utilities/MultiView.");
+    }
+}
+
+/* Edit/Copy: names of the selected rows, one per line. */
+static void copy_selected(void)
+{
+    static char text[4096];
+    LONG pos = MUIV_NList_NextSelected_Start;
+    size_t n = 0;
+    int rows = 0;
+    for (;;) {
+        gl_entry *e = NULL;
+        size_t l;
+        DoMethod(lst, MUIM_NList_NextSelected, (ULONG)&pos);
+        if (pos == MUIV_NList_NextSelected_End) break;
+        DoMethod(lst, MUIM_NList_GetEntry, pos, (ULONG)&e);
+        if (!e) continue;
+        l = strlen(e->name);
+        if (n + l + 2 >= sizeof(text)) break;
+        if (n) text[n++] = '\n';
+        memcpy(text + n, e->name, l);
+        n += l;
+        rows++;
+    }
+    text[n] = 0;
+    if (!rows) { set_status("Nothing selected to copy."); return; }
+    if (clip_write_text(text)) {
+        static char msg[60];
+        sprintf(msg, "Copied %d name%s to the clipboard.", rows, rows == 1 ? "" : "s");
+        set_status(msg);
+    } else {
+        set_status("Could not write to the clipboard.");
+    }
+}
+
+/* Edit/Paste: clipboard text into the search field (first line). */
+static void paste_search(void)
+{
+    char text[128], *nl;
+    if (clip_read_text(text, sizeof(text)) < 0) {
+        set_status("No text on the clipboard.");
+        return;
+    }
+    nl = strchr(text, '\n');
+    if (nl) *nl = 0;
+    set(str_search, MUIA_String_Contents, (ULONG)text);
+    set(win, MUIA_Window_ActiveObject, (ULONG)str_search);
+}
+
+/* ---- history ---- */
+
+#define HISTORY_FILE "PROGDIR:WHDSelector.history"
+
+/* Adds a line to the History tab (top) and to the history file. */
+static void history_add(const char *source_name, const char *name, const char *target)
+{
+    static char line[400];
+    time_t t = time(NULL);
+    struct tm *tm = localtime(&t);
+    FILE *f;
+    if (tm)
+        sprintf(line, "%04d-%02d-%02d %02d:%02d   %-10.10s  %.120s  ->  %.200s",
+                tm->tm_year + 1900, tm->tm_mon + 1, tm->tm_mday, tm->tm_hour, tm->tm_min,
+                source_name, name, target);
+    else
+        sprintf(line, "%-10.10s  %.120s  ->  %.200s", source_name, name, target);
+    DoMethod(lst_hist, MUIM_NList_InsertSingle, (ULONG)line, MUIV_NList_Insert_Top);
+    f = fopen(HISTORY_FILE, "a");
+    if (f) {
+        fprintf(f, "%s\n", line);
+        fclose(f);
+    }
+}
+
+/* Loads the history file, newest first. */
+static void history_load(void)
+{
+    static char line[400];
+    FILE *f = fopen(HISTORY_FILE, "r");
+    if (!f) return;
+    set(lst_hist, MUIA_NList_Quiet, TRUE);
+    while (fgets(line, sizeof(line), f)) {
+        size_t n = strlen(line);
+        while (n > 0 && (line[n - 1] == '\n' || line[n - 1] == '\r')) line[--n] = 0;
+        if (n) DoMethod(lst_hist, MUIM_NList_InsertSingle, (ULONG)line, MUIV_NList_Insert_Top);
+    }
+    set(lst_hist, MUIA_NList_Quiet, FALSE);
+    fclose(f);
+}
+
+static void history_clear(void)
+{
+    if (!MUI_Request(app, win, 0, (char *)"Clear history", (char *)"*_Clear|_Cancel",
+                     (char *)"Remove all entries from the history?\n(Downloaded files are not touched.)"))
+        return;
+    DoMethod(lst_hist, MUIM_NList_Clear);
+    DeleteFile((STRPTR)HISTORY_FILE);
+    alog("History cleared");
+}
+
+static const char *source_short(void)
+{
+    return source == SRC_MODLAND ? "Modland" : source == SRC_AMINET ? "Aminet" : "WHDLoad";
+}
+
+static const char *current_target(void)
+{
+    return source == SRC_MODLAND ? engine_modland_target() :
+           source == SRC_AMINET ? engine_aminet_target() : engine_extract_target();
+}
+
 static Object *build_app(void)
 {
     return ApplicationObject,
@@ -654,6 +834,7 @@ static Object *build_app(void)
         MUIA_Application_Copyright, (ULONG)"Personal use",
         MUIA_Application_Description, (ULONG)"Browser for Retroplay WHDLoad packs, Aminet and Modland",
         MUIA_Application_Base, (ULONG)"WHDSELECTOR",
+        MUIA_Application_Menustrip, MUI_MakeObject(MUIO_MenustripNM, (ULONG)main_menu, 0),
 
         SubWindow, win = WindowObject,
             MUIA_Window_Title, (ULONG)"WHDSelector",
@@ -719,15 +900,35 @@ static Object *build_app(void)
                     End,
                 End,
 
-                Child, lv_list = NListviewObject,
+                Child, RegisterGroup(register_titles),
                     MUIA_CycleChain, 1,
-                    MUIA_NListview_NList, lst = NListObject,
-                        /* No bars; DELTA gives clear space between columns. */
-                        MUIA_NList_Format, (ULONG)FORMAT_RETROPLAY,
-                        MUIA_NList_Title, TRUE,
-                        MUIA_NList_DisplayHook, (ULONG)&display_hook,
-                        MUIA_NList_Input, TRUE,
-                        MUIA_NList_MultiSelect, MUIV_NList_MultiSelect_Default,
+
+                    /* Browse */
+                    Child, lv_list = NListviewObject,
+                        MUIA_CycleChain, 1,
+                        MUIA_NListview_NList, lst = NListObject,
+                            /* No bars; DELTA gives clear space between columns. */
+                            MUIA_NList_Format, (ULONG)FORMAT_RETROPLAY,
+                            MUIA_NList_Title, TRUE,
+                            MUIA_NList_DisplayHook, (ULONG)&display_hook,
+                            MUIA_NList_Input, TRUE,
+                            MUIA_NList_MultiSelect, MUIV_NList_MultiSelect_Default,
+                        End,
+                    End,
+
+                    /* History: what was downloaded and when, newest first */
+                    Child, VGroup,
+                        Child, NListviewObject,
+                            MUIA_NListview_NList, lst_hist = NListObject,
+                                MUIA_NList_Input, FALSE,
+                                MUIA_NList_ConstructHook, MUIV_NList_ConstructHook_String,
+                                MUIA_NList_DestructHook, MUIV_NList_DestructHook_String,
+                            End,
+                        End,
+                        Child, HGroup,
+                            Child, HSpace(0),
+                            Child, bt_hist_clear = SimpleButton("Clear history"),
+                        End,
                     End,
                 End,
 
@@ -972,6 +1173,8 @@ static void setup_notifies(void)
              (ULONG)app, 2, MUIM_Application_ReturnID, ID_STOP);
     DoMethod(lst, MUIM_Notify, MUIA_NList_DoubleClick, MUIV_EveryTime,
              (ULONG)app, 2, MUIM_Application_ReturnID, ID_DCLICK);
+    DoMethod(bt_hist_clear, MUIM_Notify, MUIA_Pressed, FALSE,
+             (ULONG)app, 2, MUIM_Application_ReturnID, ID_HIST_CLEAR);
     DoMethod(bt_play, MUIM_Notify, MUIA_Pressed, FALSE,
              (ULONG)app, 2, MUIM_Application_ReturnID, ID_PLAY);
     DoMethod(bt_settings, MUIM_Notify, MUIA_Pressed, FALSE,
@@ -1039,6 +1242,7 @@ int main(void)
     else alog("%s", engine_msg);
     load_pack();
     if (games.count > 0) alog("Loaded %s: %ld titles", FilePart((STRPTR)list_file), games.count);
+    history_load();
     if (!engine_ok) set_status(engine_msg);
 
     for (;;) {
@@ -1062,6 +1266,17 @@ int main(void)
         case ID_REFRESH:  refresh_lists(); break;
         case ID_DOWNLOAD: download_selected(); break;
         case ID_PLAY:     play_selected(); break;
+        case ID_HIST_CLEAR: history_clear(); break;
+        case MEN_ABOUT:   show_about(); break;
+        case MEN_ABOUTMUI: DoMethod(app, MUIM_Application_AboutMUI, (ULONG)win); break;
+        case MEN_MANUAL:  open_manual(); break;
+        case MEN_SETTINGS: open_settings(); break;
+        case MEN_MUIPREFS: DoMethod(app, MUIM_Application_OpenConfigWindow, 0); break;
+        case MEN_COPY:    copy_selected(); break;
+        case MEN_PASTE:   paste_search(); break;
+        case MEN_SELALL:
+            DoMethod(lst, MUIM_NList_Select, MUIV_NList_Select_All, MUIV_NList_Select_On, NULL);
+            break;
         case ID_DCLICK:
             /* Double-click plays a module, otherwise downloads. */
             if (source == SRC_MODLAND) play_selected(); else download_selected();

@@ -42,7 +42,7 @@ GUI_BIN  = $(BIN_DIR)/WHDSelector
 # All of whdfetch except its main.c, compiled exactly like whdfetch.
 GUI_SRCS = src/gui/gui_main.c src/gui/game_list.c src/gui/engine.c src/gui/activity_log.c \
            src/gui/inflate.c src/gui/aminet.c src/gui/logo_data.c src/gui/modland.c \
-           src/gui/hippo.c \
+           src/gui/hippo.c src/gui/clip.c \
            $(filter-out src/main.c,$(SRCS))
 GUI_OBJS = $(patsubst src/%.c,$(OUT_DIR)/gui-obj/%.o,$(GUI_SRCS))
 GUI_CFLAGS = +aos68k -c99 -cpu=68000 -O2 -size \
@@ -54,7 +54,11 @@ GUI_LDFLAGS = +aos68k -cpu=68000 -O2 -size -final -lamiga -lauto -s
 
 all: $(BIN) $(GUI_BIN)
 
-gui: $(GUI_BIN)
+gui: $(GUI_BIN) $(BIN_DIR)/WHDSelector.guide
+
+$(BIN_DIR)/WHDSelector.guide: docs/WHDSelector.guide
+	@mkdir -p $(BIN_DIR)
+	cp $< $@
 
 $(OUT_DIR)/gui-obj/%.o: src/%.c $(GEN_DIR)/build_version.h
 	@mkdir -p $(dir $@)
