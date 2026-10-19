@@ -58,8 +58,12 @@ int gl_load(gl_list *list, const char *path)
         tab = strchr(p, '\t');
         if (tab) *tab = 0;
         if (*p) {
-            list->items[list->count].name = p;
-            list->items[list->count].size = tab ? strtoul(tab + 1, 0, 10) : 0;
+            gl_entry *e = &list->items[list->count];
+            char *tab2 = tab ? strchr(tab + 1, '\t') : 0;
+            if (tab2) *tab2 = 0;
+            e->name = p;
+            e->size = tab ? strtoul(tab + 1, 0, 10) : 0;
+            e->crc = tab2 ? tab2 + 1 : "";
             list->count++;
         }
         if (!eol) break;

@@ -23,6 +23,7 @@
 
 #include "gui/game_list.h"
 #include "gamefile_parser.h"
+#include "gui/engine.h"
 
 extern const char *WHDLOAD_FILE_FILTER_DAT_GAMES;
 extern const char *WHDLOAD_FILE_FILTER_DAT_GAMES_BETA_AND_UNRELEASED;
@@ -31,14 +32,14 @@ extern const char *WHDLOAD_FILE_FILTER_DAT_BETA_AND_UNRELEASED;
 extern const char *WHDLOAD_FILE_FILTER_DAT_MAGAZINES;
 extern const char *DIR_DAT_FILES;
 
-size_t __stack = 65536;
-static const char version[] = "$VER: WHDSelector 0.2 (19.10.2026)";
+size_t __stack = 131072;   /* same as whdfetch */
+static const char version[] = "$VER: WHDSelector 0.3 (19.10.2026)";
 
 struct Library *MUIMasterBase;
 
 #define MAKE_ID(a, b, c, d) ((ULONG)(a) << 24 | (ULONG)(b) << 16 | (ULONG)(c) << 8 | (ULONG)(d))
 
-enum { ID_PACK = 1, ID_SEARCH, ID_LETTER, ID_REFRESH };
+enum { ID_PACK = 1, ID_SEARCH, ID_LETTER, ID_REFRESH, ID_DOWNLOAD, ID_STOP };
 
 /* ---- packs ---- */
 
@@ -84,6 +85,9 @@ static int letter_value(LONG active)
 /* ---- state ---- */
 
 static Object *app, *win, *cy_pack, *str_search, *cy_letter, *lv_list, *lst, *txt_status, *bt_refresh;
+static Object *bt_download, *bt_stop, *gauge;
+static int engine_ok, quit_after_download;
+static char engine_msg[120];
 static gl_list games;
 static gl_entry **shown;
 static char list_file[256];
@@ -230,39 +234,104 @@ static void load_pack(void)
     apply_filter();
 }
 
-/* Runs whdfetch from PROGDIR: to download the latest DATs (no games). */
+/* Downloads the latest DATs with whdfetch's own code (no games). */
 static void refresh_lists(void)
 {
-    BPTR con, old_dir, prog_dir;
-    LONG rc;
+    static char msg[120];
 
-    set(app, MUIA_Application_Sleep, TRUE);
-    set_status("Fetching the latest lists with whdfetch...");
-
-    prog_dir = Lock((STRPTR)"PROGDIR:", ACCESS_READ);
-    con = Open((STRPTR)"CON:20/20/600/180/whdfetch/AUTO/CLOSE/WAIT", MODE_NEWFILE);
-    if (!prog_dir || !con) {
-        if (con) Close(con);
-        if (prog_dir) UnLock(prog_dir);
-        set(app, MUIA_Application_Sleep, FALSE);
-        set_status("Could not start whdfetch.");
+    if (!engine_ok) {
+        set_status(engine_msg);
         return;
     }
-    old_dir = CurrentDir(prog_dir);
-    rc = SystemTags((STRPTR)"whdfetch DOWNLOADALL ESTIMATESPACE",
-                    SYS_Input, (ULONG)con, SYS_Output, (ULONG)NULL, TAG_DONE);
-    CurrentDir(old_dir);
-    UnLock(prog_dir);
-    Close(con);
-    set(app, MUIA_Application_Sleep, FALSE);
-
-    if (rc != 0) {
-        static char msg[80];
-        sprintf(msg, "whdfetch failed (return code %ld).", (long)rc);
+    set(app, MUIA_Application_Sleep, TRUE);
+    set_status("Fetching the latest lists...");
+    msg[0] = 0;
+    if (!engine_refresh_lists(msg, sizeof(msg))) {
+        set(app, MUIA_Application_Sleep, FALSE);
         set_status(msg);
         return;
     }
+    set(app, MUIA_Application_Sleep, FALSE);
     load_pack();
+}
+
+/* Handles pending input without waiting; returns 1 if the user pressed
+ * Stop or closed the window. */
+static int poll_stop(void)
+{
+    ULONG sigs = 0;
+    LONG id;
+    int stop = 0;
+    while ((id = (LONG)DoMethod(app, MUIM_Application_NewInput, (ULONG)&sigs)) != 0) {
+        if (id == ID_STOP) stop = 1;
+        if (id == (LONG)MUIV_Application_ReturnID_Quit) { stop = 1; quit_after_download = 1; }
+    }
+    if (SetSignal(0, SIGBREAKF_CTRL_C) & SIGBREAKF_CTRL_C) stop = 1;
+    return stop;
+}
+
+/* Downloads and extracts the selected archives one by one with whdfetch's
+ * per-archive routine. Stop takes effect between archives. */
+static void download_selected(void)
+{
+    static char status[300];
+    gl_entry **todo;
+    LONG pos = MUIV_NList_NextSelected_Start, pack = 0, n = 0, i;
+    int installed = 0, skipped = 0, failed = 0, stopped = 0;
+
+    if (!engine_ok) {
+        set_status(engine_msg);
+        return;
+    }
+    todo = (gl_entry **)malloc((size_t)(games.count + 1) * sizeof(gl_entry *));
+    if (!todo) {
+        set_status("Out of memory.");
+        return;
+    }
+    for (;;) {
+        gl_entry *e = NULL;
+        DoMethod(lst, MUIM_NList_NextSelected, (ULONG)&pos);
+        if (pos == MUIV_NList_NextSelected_End) break;
+        DoMethod(lst, MUIM_NList_GetEntry, pos, (ULONG)&e);
+        if (e) todo[n++] = e;
+    }
+    if (n == 0) {
+        free(todo);
+        set_status("Select one or more titles first (Shift or Ctrl + click).");
+        return;
+    }
+    get(cy_pack, MUIA_Cycle_Active, &pack);
+
+    set(bt_download, MUIA_Disabled, TRUE);
+    set(bt_refresh, MUIA_Disabled, TRUE);
+    set(cy_pack, MUIA_Disabled, TRUE);
+    set(bt_stop, MUIA_Disabled, FALSE);
+    set(gauge, MUIA_Gauge_Max, n);
+    set(gauge, MUIA_Gauge_Current, 0);
+
+    for (i = 0; i < n; i++) {
+        int r;
+        sprintf(status, "Downloading %ld of %ld: %.200s", i + 1, n, todo[i]->name);
+        set_status(status);
+        if (poll_stop()) { stopped = 1; break; }
+
+        r = engine_install((int)pack, todo[i]->name, todo[i]->size, todo[i]->crc);
+        if (r == ENGINE_INSTALLED) installed++;
+        else if (r == ENGINE_SKIPPED) skipped++;
+        else if (r == ENGINE_CANCELLED) { stopped = 1; break; }
+        else failed++;
+        set(gauge, MUIA_Gauge_Current, i + 1);
+    }
+
+    set(bt_stop, MUIA_Disabled, TRUE);
+    set(bt_download, MUIA_Disabled, FALSE);
+    set(bt_refresh, MUIA_Disabled, FALSE);
+    set(cy_pack, MUIA_Disabled, FALSE);
+    free(todo);
+
+    sprintf(status, "%s%d installed, %d already there, %d failed. Target: %.150s",
+            stopped ? "Stopped. " : "Done. ", installed, skipped, failed, engine_extract_target());
+    set_status(status);
 }
 
 /* ---- setup ---- */
@@ -308,12 +377,21 @@ static Object *build_app(void)
                         MUIA_NList_Title, TRUE,
                         MUIA_NList_DisplayHook, (ULONG)&display_hook,
                         MUIA_NList_Input, TRUE,
+                        MUIA_NList_MultiSelect, MUIV_NList_MultiSelect_Default,
                     End,
                 End,
 
                 Child, HGroup,
-                    Child, bt_refresh = SimpleButton("_Refresh list"),
+                    Child, bt_download = SimpleButton("_Download selected"),
+                    Child, bt_stop = SimpleButton("_Stop"),
                     Child, HSpace(0),
+                    Child, bt_refresh = SimpleButton("_Refresh list"),
+                End,
+
+                Child, gauge = GaugeObject,
+                    GaugeFrame,
+                    MUIA_Gauge_Horiz, TRUE,
+                    MUIA_FixHeightTxt, (ULONG)"X",
                 End,
 
                 Child, txt_status = TextObject,
@@ -338,6 +416,12 @@ static void setup_notifies(void)
              (ULONG)app, 2, MUIM_Application_ReturnID, ID_SEARCH);
     DoMethod(bt_refresh, MUIM_Notify, MUIA_Pressed, FALSE,
              (ULONG)app, 2, MUIM_Application_ReturnID, ID_REFRESH);
+    DoMethod(bt_download, MUIM_Notify, MUIA_Pressed, FALSE,
+             (ULONG)app, 2, MUIM_Application_ReturnID, ID_DOWNLOAD);
+    DoMethod(bt_stop, MUIM_Notify, MUIA_Pressed, FALSE,
+             (ULONG)app, 2, MUIM_Application_ReturnID, ID_STOP);
+    DoMethod(lst, MUIM_Notify, MUIA_NList_DoubleClick, MUIV_EveryTime,
+             (ULONG)app, 2, MUIM_Application_ReturnID, ID_DOWNLOAD);
 }
 
 int main(void)
@@ -354,6 +438,7 @@ int main(void)
     MUIMasterBase = OpenLibrary((STRPTR)MUIMASTER_NAME, 19);
     if (!MUIMasterBase) {
         printf("WHDSelector needs MUI 3.8 or newer (muimaster.library v19).\n");
+        CurrentDir(old_dir);
         return RETURN_FAIL;
     }
 
@@ -365,18 +450,25 @@ int main(void)
         return RETURN_FAIL;
     }
     setup_notifies();
+    set(bt_stop, MUIA_Disabled, TRUE);
     set(win, MUIA_Window_Open, TRUE);
+
+    /* Without a network the lists can still be browsed (E-05). */
+    engine_ok = engine_init(engine_msg, sizeof(engine_msg));
     load_pack();
+    if (!engine_ok) set_status(engine_msg);
 
     for (;;) {
         id = (LONG)DoMethod(app, MUIM_Application_NewInput, (ULONG)&sigs);
         if (id == (LONG)MUIV_Application_ReturnID_Quit) break;
         switch (id) {
-        case ID_PACK:    load_pack(); break;
+        case ID_PACK:     load_pack(); break;
         case ID_SEARCH:
-        case ID_LETTER:  apply_filter(); break;
-        case ID_REFRESH: refresh_lists(); break;
+        case ID_LETTER:   apply_filter(); break;
+        case ID_REFRESH:  refresh_lists(); break;
+        case ID_DOWNLOAD: download_selected(); break;
         }
+        if (quit_after_download) break;
         if (sigs) {
             sigs = Wait(sigs | SIGBREAKF_CTRL_C);
             if (sigs & SIGBREAKF_CTRL_C) break;
@@ -385,6 +477,7 @@ int main(void)
 
     set(win, MUIA_Window_Open, FALSE);
     MUI_DisposeObject(app);
+    engine_shutdown();
     free(shown);
     gl_free(&games);
     CloseLibrary(MUIMasterBase);

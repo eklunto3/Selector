@@ -39,15 +39,16 @@ OBJS = $(patsubst src/%.c,$(OUT_DIR)/%.o,$(SRCS))
 # WHDSelector GUI: MUI 3.8 headers first, NList headers from the MUI 5 SDK
 # (they only define tags), never MUI 5 features.
 GUI_BIN  = $(BIN_DIR)/WHDSelector
-GUI_SRCS = src/gui/gui_main.c src/gui/game_list.c src/config/app_constants.c \
-           src/gamefile_parser.c src/utilities.c src/log/log.c
+# All of whdfetch except its main.c, compiled exactly like whdfetch.
+GUI_SRCS = src/gui/gui_main.c src/gui/game_list.c src/gui/engine.c \
+           $(filter-out src/main.c,$(SRCS))
 GUI_OBJS = $(patsubst src/%.c,$(OUT_DIR)/gui-obj/%.o,$(GUI_SRCS))
-GUI_CFLAGS = +aos68k -c99 -cpu=68020 -O2 -size \
+GUI_CFLAGS = +aos68k -c99 -cpu=68000 -O2 -size \
          -I$(VBCC)/targets/m68k-amigaos/include \
          -I$(SRC_DIR) -I$(GEN_DIR) \
          -I/opt/sdk/MUI_3.8/C/Include -I$(NDK_INC) -I/opt/sdk/MUI_5.0/C/include \
-         -I$(ROADSHOW_INC) -DPLATFORM_AMIGA=1 -D__AMIGA__
-GUI_LDFLAGS = +aos68k -cpu=68020 -O2 -size -final -lamiga -lauto -s
+         -I$(ROADSHOW_INC) -DPLATFORM_AMIGA=1 -D__AMIGA__ -DDEBUG
+GUI_LDFLAGS = +aos68k -cpu=68000 -O2 -size -final -lamiga -lauto -s
 
 all: $(BIN) $(GUI_BIN)
 

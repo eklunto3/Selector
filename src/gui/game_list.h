@@ -7,6 +7,7 @@
 typedef struct {
     const char *name;     /* archive file name, e.g. "Alien3_v2.2.lha" */
     unsigned long size;   /* bytes, 0 if unknown */
+    const char *crc;      /* CRC-32 hex as in the DAT, "" if unknown */
 } gl_entry;
 
 typedef struct {
