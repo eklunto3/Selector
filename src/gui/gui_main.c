@@ -25,6 +25,7 @@
 #include "gui/game_list.h"
 #include "gamefile_parser.h"
 #include "gui/engine.h"
+#include "gui/activity_log.h"
 
 extern const char *WHDLOAD_FILE_FILTER_DAT_GAMES;
 extern const char *WHDLOAD_FILE_FILTER_DAT_GAMES_BETA_AND_UNRELEASED;
@@ -34,7 +35,7 @@ extern const char *WHDLOAD_FILE_FILTER_DAT_MAGAZINES;
 extern const char *DIR_DAT_FILES;
 
 size_t __stack = 131072;   /* same as whdfetch */
-static const char version[] = "$VER: WHDSelector 0.5 (19.10.2026)";
+static const char version[] = "$VER: WHDSelector 0.6 (19.10.2026)";
 
 struct Library *MUIMasterBase;
 
@@ -87,7 +88,7 @@ static int letter_value(LONG active)
 /* ---- state ---- */
 
 static Object *app, *win, *cy_pack, *str_search, *cy_letter, *lv_list, *lst, *txt_status, *bt_refresh;
-static Object *bt_download, *bt_stop, *gauge, *bt_settings;
+static Object *bt_download, *bt_stop, *gauge, *bt_settings, *lst_log;
 static Object *win_set, *str_dir, *cm_delete, *cm_aga, *cm_cd, *cm_ntsc, *cm_eng, *bt_save, *bt_cancel;
 static int engine_ok, quit_after_download;
 static char engine_msg[120];
@@ -244,17 +245,24 @@ static void refresh_lists(void)
 
     if (!engine_ok) engine_ok = engine_init(engine_msg, sizeof(engine_msg));
     if (!engine_ok) {
+        alog("%s", engine_msg);
         set_status(engine_msg);
         return;
     }
     set(app, MUIA_Application_Sleep, TRUE);
     set_status("Fetching the latest lists...");
+    alog("Refresh: downloading index page and DAT files...");
     msg[0] = 0;
+    alog_capture_begin();
     if (!engine_refresh_lists(msg, sizeof(msg))) {
+        alog_capture_end();
+        alog("Refresh failed: %s", msg);
         set(app, MUIA_Application_Sleep, FALSE);
         set_status(msg);
         return;
     }
+    alog_capture_end();
+    alog("Refresh: lists updated.");
     set(app, MUIA_Application_Sleep, FALSE);
     load_pack();
 }
@@ -285,6 +293,7 @@ static void download_selected(void)
 
     if (!engine_ok) engine_ok = engine_init(engine_msg, sizeof(engine_msg));
     if (!engine_ok) {
+        alog("%s", engine_msg);
         set_status(engine_msg);
         return;
     }
@@ -320,13 +329,18 @@ static void download_selected(void)
         set_status(status);
         if (poll_stop()) { stopped = 1; break; }
 
+        alog("Download %ld/%ld: %s (%lu KB)", i + 1, n, todo[i]->name,
+             (todo[i]->size + 1023) / 1024);
+        alog_capture_begin();
         r = engine_install((int)pack, todo[i]->name, todo[i]->size, todo[i]->crc);
-        if (r == ENGINE_INSTALLED) installed++;
-        else if (r == ENGINE_SKIPPED) skipped++;
-        else if (r == ENGINE_CANCELLED) { stopped = 1; break; }
-        else failed++;
+        alog_capture_end();
+        if (r == ENGINE_INSTALLED) { installed++; alog("OK: %s downloaded and extracted", todo[i]->name); }
+        else if (r == ENGINE_SKIPPED) { skipped++; alog("Skipped: %s is already there", todo[i]->name); }
+        else if (r == ENGINE_CANCELLED) { stopped = 1; alog("Cancelled: %s", todo[i]->name); break; }
+        else { failed++; alog("FAILED: %s (see lines above)", todo[i]->name); }
         set(gauge, MUIA_Gauge_Current, i + 1);
     }
+    if (stopped && i < n) alog("Stopped by user.");
 
     set(bt_stop, MUIA_Disabled, TRUE);
     set(bt_download, MUIA_Disabled, FALSE);
@@ -337,6 +351,7 @@ static void download_selected(void)
     sprintf(status, "%s%d installed, %d already there, %d failed. Target: %.150s",
             stopped ? "Stopped. " : "Done. ", installed, skipped, failed, engine_extract_target());
     set_status(status);
+    alog("%s", status);
 }
 
 /* ---- setup ---- */
@@ -405,6 +420,17 @@ static Object *build_app(void)
                     TextFrame,
                     MUIA_Background, MUII_TextBack,
                     MUIA_Text_Contents, (ULONG)"",
+                End,
+
+                Child, VGroup, GroupFrameT("Log"),
+                    MUIA_VertWeight, 35,
+                    Child, NListviewObject,
+                        MUIA_NListview_NList, lst_log = NListObject,
+                            MUIA_NList_Input, FALSE,
+                            MUIA_NList_ConstructHook, MUIV_NList_ConstructHook_String,
+                            MUIA_NList_DestructHook, MUIV_NList_DestructHook_String,
+                        End,
+                    End,
                 End,
             End,
         End,
@@ -582,9 +608,17 @@ int main(void)
         freopen("NIL:", "w", stderr);
     }
 
+    alog_init(lst_log);
+    alog("%s started", version + 6);
+
     /* Without a network the lists can still be browsed (E-05). */
+    alog_capture_begin();
     engine_ok = engine_init(engine_msg, sizeof(engine_msg));
+    alog_capture_end();
+    if (engine_ok) alog("Network ready. Install target: %s", engine_extract_target());
+    else alog("%s", engine_msg);
     load_pack();
+    if (games.count > 0) alog("Loaded %s: %ld titles", FilePart((STRPTR)list_file), games.count);
     if (!engine_ok) set_status(engine_msg);
 
     for (;;) {
@@ -607,9 +641,15 @@ int main(void)
         }
     }
 
+    /* Log the shutdown while the log panel still exists. */
+    alog_capture_begin();
+    engine_shutdown();
+    alog_capture_end();
+    alog("WHDSelector closed");
+    alog_close();
+
     set(win, MUIA_Window_Open, FALSE);
     MUI_DisposeObject(app);
-    engine_shutdown();
     free(shown);
     gl_free(&games);
     CloseLibrary(MUIMasterBase);
