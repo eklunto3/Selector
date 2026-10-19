@@ -24,7 +24,8 @@
 static struct whdload_pack_def packs[NUM_PACKS];
 static struct download_option options;
 static BOOL download_lib_ready = FALSE;
-static int initialised = 0;
+static int initialised = 0;      /* network ready */
+static int config_loaded = 0;    /* defaults + whdfetch.ini loaded */
 
 /* GUI cycle order -> whdfetch pack index (see app_constants.c). */
 static int pack_index(int gui_pack)
@@ -65,15 +66,21 @@ int engine_init(char *msg, int msg_len)
 {
     int i;
 
-    setup_app_defaults(packs, &options);
-    report_init();
-    ini_parser_load_overrides(packs, &options);
-    ensure_time_zone_set();
-    start_time = time(NULL);
+    /* Configuration once; the network part is retried on every call until
+     * it works, so WHDSelector can be started before the TCP/IP stack. */
+    if (!config_loaded) {
+        setup_app_defaults(packs, &options);
+        report_init();
+        ini_parser_load_overrides(packs, &options);
+        ensure_time_zone_set();
+        start_time = time(NULL);
 
-    /* The GUI decides per archive what to fetch; keep all packs active so
-     * refresh processes every DAT. */
-    for (i = 0; i < NUM_PACKS; i++) packs[i].user_requested_download = 1;
+        /* The GUI decides per archive what to fetch; keep all packs active
+         * so refresh processes every DAT. */
+        for (i = 0; i < NUM_PACKS; i++) packs[i].user_requested_download = 1;
+        config_loaded = 1;
+    }
+    if (initialised) return 1;
 
     if (!ad_init_download_lib_taglist(
             ADTAG_Verbose, FALSE,
@@ -82,8 +89,8 @@ int engine_init(char *msg, int msg_len)
             ADTAG_UserAgent, "whdfetch/1.0",
             ADTAG_MaxRetries, 2,
             TAG_DONE)) {
-        set_msg(msg, msg_len, "Cannot open bsdsocket.library. Is the TCP/IP stack running?");
-        lifecycle_do_shutdown(&download_lib_ready);
+        set_msg(msg, msg_len,
+                "No network: cannot open bsdsocket.library. Put Miami online, then press Refresh list.");
         return 0;
     }
     download_lib_ready = TRUE;
@@ -93,9 +100,10 @@ int engine_init(char *msg, int msg_len)
 
 void engine_shutdown(void)
 {
-    if (!initialised) return;
+    if (!config_loaded) return;
     lifecycle_do_shutdown(&download_lib_ready);
     initialised = 0;
+    config_loaded = 0;
 }
 
 int engine_refresh_lists(char *msg, int msg_len)

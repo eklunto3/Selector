@@ -34,7 +34,7 @@ extern const char *WHDLOAD_FILE_FILTER_DAT_MAGAZINES;
 extern const char *DIR_DAT_FILES;
 
 size_t __stack = 131072;   /* same as whdfetch */
-static const char version[] = "$VER: WHDSelector 0.4 (19.10.2026)";
+static const char version[] = "$VER: WHDSelector 0.5 (19.10.2026)";
 
 struct Library *MUIMasterBase;
 
@@ -242,6 +242,7 @@ static void refresh_lists(void)
 {
     static char msg[120];
 
+    if (!engine_ok) engine_ok = engine_init(engine_msg, sizeof(engine_msg));
     if (!engine_ok) {
         set_status(engine_msg);
         return;
@@ -282,6 +283,7 @@ static void download_selected(void)
     LONG pos = MUIV_NList_NextSelected_Start, pack = 0, n = 0, i;
     int installed = 0, skipped = 0, failed = 0, stopped = 0;
 
+    if (!engine_ok) engine_ok = engine_init(engine_msg, sizeof(engine_msg));
     if (!engine_ok) {
         set_status(engine_msg);
         return;
