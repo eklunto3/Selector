@@ -27,4 +27,19 @@ int engine_install(int pack, const char *archive, unsigned long size, const char
 /* Where extracted titles go, for the status line. */
 const char *engine_extract_target(void);
 
+/* Settings shown in the Settings window; stored as whdfetch.ini keys
+ * (extract_path, delete_archives_after_extract, skip_aga, skip_cd,
+ * skip_ntsc, skip_non_english) so whdfetch and WHDSelector agree. */
+typedef struct {
+    char install_dir[256];   /* "" = whdfetch default (GameFiles/...) */
+    int delete_archives;
+    int skip_aga, skip_cd, skip_ntsc, skip_non_english;
+} engine_settings;
+
+void engine_get_settings(engine_settings *s);
+
+/* Applies the settings at once and writes them to PROGDIR:whdfetch.ini.
+ * Returns 0 if the file could not be written (msg says why). */
+int engine_save_settings(const engine_settings *s, char *msg, int msg_len);
+
 #endif

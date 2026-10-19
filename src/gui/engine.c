@@ -38,6 +38,21 @@ static int pack_index(int gui_pack)
     }
 }
 
+static int lower_ascii(int c)
+{
+    return (c >= 'A' && c <= 'Z') ? c + 32 : c;
+}
+
+static int strnicmp_ascii(const char *a, const char *b, size_t n)
+{
+    size_t i;
+    for (i = 0; i < n; i++) {
+        int d = lower_ascii((unsigned char)a[i]) - lower_ascii((unsigned char)b[i]);
+        if (d || !a[i]) return d;
+    }
+    return 0;
+}
+
 static void set_msg(char *msg, int len, const char *text)
 {
     if (msg && len > 0) {
@@ -115,6 +130,129 @@ int engine_install(int pack, const char *archive, unsigned long size, const char
     if (rc == 2) return ENGINE_SKIPPED;
     if (rc == 20) return ENGINE_CANCELLED;
     return rc == 0 ? ENGINE_INSTALLED : ENGINE_FAILED;
+}
+
+/* ---- settings ---- */
+
+#define INI_PATH "PROGDIR:whdfetch.ini"
+#define NUM_KEYS 6
+
+static char install_dir_buf[256];
+
+void engine_get_settings(engine_settings *s)
+{
+    memset(s, 0, sizeof(*s));
+    if (options.extract_path) {
+        strncpy(s->install_dir, options.extract_path, sizeof(s->install_dir) - 1);
+    }
+    s->delete_archives = options.delete_archives_after_extract == TRUE;
+    s->skip_aga = skip_AGA != 0;
+    s->skip_cd = skip_CD != 0;
+    s->skip_ntsc = skip_NTSC != 0;
+    s->skip_non_english = skip_NonEnglish != 0;
+}
+
+/* "key" or "key  =..." at the start of an ini line (after blanks). */
+static int line_has_key(const char *line, const char *key)
+{
+    size_t n = strlen(key);
+    while (*line == ' ' || *line == '\t') line++;
+    if (strnicmp_ascii(line, key, n) != 0) return 0;
+    line += n;
+    while (*line == ' ' || *line == '\t') line++;
+    return *line == '=';
+}
+
+static int is_section(const char *line, const char **name_end)
+{
+    while (*line == ' ' || *line == '\t') line++;
+    if (*line != '[') return 0;
+    *name_end = strchr(line, ']');
+    return *name_end != NULL;
+}
+
+static int is_global_section(const char *line)
+{
+    while (*line == ' ' || *line == '\t') line++;
+    return strnicmp_ascii(line, "[global]", 8) == 0;
+}
+
+/* Rewrites our keys inside [global] and keeps every other line as it is. */
+static int write_ini(const char *keys[], char values[][260], char *msg, int msg_len)
+{
+    static char line[1024];
+    FILE *in, *out;
+    int written[NUM_KEYS] = { 0 };
+    int in_global = 0, seen_global = 0, i;
+    const char *tmp = INI_PATH ".tmp";
+
+    out = fopen(tmp, "w");
+    if (!out) { set_msg(msg, msg_len, "Cannot write " INI_PATH); return 0; }
+    in = fopen(INI_PATH, "r");
+
+    while (in && fgets(line, sizeof(line), in)) {
+        const char *end;
+        if (is_section(line, &end)) {
+            if (in_global) {
+                for (i = 0; i < NUM_KEYS; i++)
+                    if (!written[i]) { fprintf(out, "%s=%s\n", keys[i], values[i]); written[i] = 1; }
+            }
+            in_global = is_global_section(line);
+            if (in_global) seen_global = 1;
+            fputs(line, out);
+            continue;
+        }
+        if (in_global) {
+            int replaced = 0;
+            for (i = 0; i < NUM_KEYS; i++) {
+                if (line_has_key(line, keys[i])) {
+                    if (!written[i]) fprintf(out, "%s=%s\n", keys[i], values[i]);
+                    written[i] = 1;
+                    replaced = 1;
+                    break;
+                }
+            }
+            if (replaced) continue;
+        }
+        fputs(line, out);
+    }
+    if (in) fclose(in);
+
+    if (!seen_global) fputs("\n[global]\n", out);
+    for (i = 0; i < NUM_KEYS; i++)
+        if (!written[i]) fprintf(out, "%s=%s\n", keys[i], values[i]);
+
+    if (fclose(out) != 0) { remove(tmp); set_msg(msg, msg_len, "Cannot write " INI_PATH); return 0; }
+    remove(INI_PATH);
+    if (rename(tmp, INI_PATH) != 0) { set_msg(msg, msg_len, "Cannot replace " INI_PATH); return 0; }
+    return 1;
+}
+
+int engine_save_settings(const engine_settings *s, char *msg, int msg_len)
+{
+    static const char *keys[NUM_KEYS] = {
+        "extract_path", "delete_archives_after_extract",
+        "skip_aga", "skip_cd", "skip_ntsc", "skip_non_english"
+    };
+    static char values[NUM_KEYS][260];
+
+    /* Apply now. */
+    strncpy(install_dir_buf, s->install_dir, sizeof(install_dir_buf) - 1);
+    install_dir_buf[sizeof(install_dir_buf) - 1] = 0;
+    options.extract_path = install_dir_buf[0] ? install_dir_buf : NULL;
+    options.delete_archives_after_extract = s->delete_archives ? TRUE : FALSE;
+    skip_AGA = s->skip_aga;
+    skip_CD = s->skip_cd;
+    skip_NTSC = s->skip_ntsc;
+    skip_NonEnglish = s->skip_non_english;
+
+    strcpy(values[0], install_dir_buf);
+    strcpy(values[1], s->delete_archives ? "true" : "false");
+    strcpy(values[2], s->skip_aga ? "true" : "false");
+    strcpy(values[3], s->skip_cd ? "true" : "false");
+    strcpy(values[4], s->skip_ntsc ? "true" : "false");
+    strcpy(values[5], s->skip_non_english ? "true" : "false");
+    return write_ini(keys, values, msg, msg_len);
 }
 
 const char *engine_extract_target(void)

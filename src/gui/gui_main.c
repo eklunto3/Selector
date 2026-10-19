@@ -14,6 +14,7 @@
 #include <dos/dos.h>
 #include <dos/dostags.h>
 #include <libraries/mui.h>
+#include <libraries/asl.h>
 #include <mui/NListview_mcc.h>
 #include <proto/exec.h>
 #include <proto/dos.h>
@@ -33,13 +34,14 @@ extern const char *WHDLOAD_FILE_FILTER_DAT_MAGAZINES;
 extern const char *DIR_DAT_FILES;
 
 size_t __stack = 131072;   /* same as whdfetch */
-static const char version[] = "$VER: WHDSelector 0.3 (19.10.2026)";
+static const char version[] = "$VER: WHDSelector 0.4 (19.10.2026)";
 
 struct Library *MUIMasterBase;
 
 #define MAKE_ID(a, b, c, d) ((ULONG)(a) << 24 | (ULONG)(b) << 16 | (ULONG)(c) << 8 | (ULONG)(d))
 
-enum { ID_PACK = 1, ID_SEARCH, ID_LETTER, ID_REFRESH, ID_DOWNLOAD, ID_STOP };
+enum { ID_PACK = 1, ID_SEARCH, ID_LETTER, ID_REFRESH, ID_DOWNLOAD, ID_STOP,
+       ID_SETTINGS, ID_SET_SAVE, ID_SET_CANCEL };
 
 /* ---- packs ---- */
 
@@ -85,7 +87,8 @@ static int letter_value(LONG active)
 /* ---- state ---- */
 
 static Object *app, *win, *cy_pack, *str_search, *cy_letter, *lv_list, *lst, *txt_status, *bt_refresh;
-static Object *bt_download, *bt_stop, *gauge;
+static Object *bt_download, *bt_stop, *gauge, *bt_settings;
+static Object *win_set, *str_dir, *cm_delete, *cm_aga, *cm_cd, *cm_ntsc, *cm_eng, *bt_save, *bt_cancel;
 static int engine_ok, quit_after_download;
 static char engine_msg[120];
 static gl_list games;
@@ -373,7 +376,8 @@ static Object *build_app(void)
                 Child, lv_list = NListviewObject,
                     MUIA_CycleChain, 1,
                     MUIA_NListview_NList, lst = NListObject,
-                        MUIA_NList_Format, (ULONG)"BAR,BAR,BAR,P=\33r",
+                        /* No bars; DELTA gives clear space between columns. */
+                        MUIA_NList_Format, (ULONG)"DELTA=16 W=55,DELTA=16 W=10,DELTA=16 W=25,P=\33r W=10",
                         MUIA_NList_Title, TRUE,
                         MUIA_NList_DisplayHook, (ULONG)&display_hook,
                         MUIA_NList_Input, TRUE,
@@ -386,6 +390,7 @@ static Object *build_app(void)
                     Child, bt_stop = SimpleButton("_Stop"),
                     Child, HSpace(0),
                     Child, bt_refresh = SimpleButton("_Refresh list"),
+                    Child, bt_settings = SimpleButton("S_ettings..."),
                 End,
 
                 Child, gauge = GaugeObject,
@@ -401,7 +406,109 @@ static Object *build_app(void)
                 End,
             End,
         End,
+
+        SubWindow, win_set = WindowObject,
+            MUIA_Window_Title, (ULONG)"WHDSelector Settings",
+            MUIA_Window_ID, MAKE_ID('W', 'H', 'S', 'E'),
+            WindowContents, VGroup,
+
+                Child, VGroup, GroupFrameT("Install"),
+                    Child, HGroup,
+                        Child, Label2("Install directory:"),
+                        Child, PopaslObject,
+                            MUIA_Popstring_String, str_dir = StringObject,
+                                StringFrame,
+                                MUIA_String_MaxLen, 255,
+                                MUIA_CycleChain, 1,
+                            End,
+                            MUIA_Popstring_Button, PopButton(MUII_PopDrawer),
+                            ASLFR_TitleText, (ULONG)"Select install directory",
+                            ASLFR_DrawersOnly, TRUE,
+                        End,
+                    End,
+                    Child, TextObject,
+                        MUIA_Text_Contents, (ULONG)"\33cEmpty = whdfetch default (GameFiles in the program directory)",
+                    End,
+                    Child, HGroup,
+                        Child, cm_delete = CheckMark(TRUE),
+                        Child, LLabel1("Delete archives after extracting"),
+                        Child, HSpace(0),
+                    End,
+                End,
+
+                Child, VGroup, GroupFrameT("List filters (applied on Refresh list)"),
+                    Child, ColGroup(4),
+                        Child, cm_aga = CheckMark(FALSE),
+                        Child, LLabel1("Hide AGA"),
+                        Child, cm_cd = CheckMark(FALSE),
+                        Child, LLabel1("Hide CD32 / CDTV"),
+                        Child, cm_ntsc = CheckMark(FALSE),
+                        Child, LLabel1("Hide NTSC"),
+                        Child, cm_eng = CheckMark(FALSE),
+                        Child, LLabel1("Hide non-English"),
+                    End,
+                End,
+
+                Child, HGroup,
+                    Child, bt_save = SimpleButton("_Save"),
+                    Child, HSpace(0),
+                    Child, bt_cancel = SimpleButton("_Cancel"),
+                End,
+            End,
+        End,
     End;
+}
+
+/* ---- settings window ---- */
+
+static void open_settings(void)
+{
+    engine_settings s;
+    engine_get_settings(&s);
+    set(str_dir, MUIA_String_Contents, (ULONG)s.install_dir);
+    set(cm_delete, MUIA_Selected, s.delete_archives);
+    set(cm_aga, MUIA_Selected, s.skip_aga);
+    set(cm_cd, MUIA_Selected, s.skip_cd);
+    set(cm_ntsc, MUIA_Selected, s.skip_ntsc);
+    set(cm_eng, MUIA_Selected, s.skip_non_english);
+    set(win_set, MUIA_Window_Open, TRUE);
+}
+
+static LONG checked(Object *o)
+{
+    LONG v = 0;
+    get(o, MUIA_Selected, &v);
+    return v ? 1 : 0;
+}
+
+static void save_settings(void)
+{
+    static char msg[160];
+    engine_settings s;
+    STRPTR dir = NULL;
+
+    memset(&s, 0, sizeof(s));
+    get(str_dir, MUIA_String_Contents, &dir);
+    if (dir) {
+        strncpy(s.install_dir, (const char *)dir, sizeof(s.install_dir) - 1);
+        /* whdfetch joins paths with '/', so a drawer needs a trailing one. */
+        if (s.install_dir[0] && strlen(s.install_dir) < sizeof(s.install_dir) - 1) {
+            char last = s.install_dir[strlen(s.install_dir) - 1];
+            if (last != ':' && last != '/') strcat(s.install_dir, "/");
+        }
+    }
+    s.delete_archives = (int)checked(cm_delete);
+    s.skip_aga = (int)checked(cm_aga);
+    s.skip_cd = (int)checked(cm_cd);
+    s.skip_ntsc = (int)checked(cm_ntsc);
+    s.skip_non_english = (int)checked(cm_eng);
+
+    msg[0] = 0;
+    if (engine_save_settings(&s, msg, sizeof(msg))) {
+        sprintf(msg, "Settings saved. Install to: %.120s", engine_extract_target());
+        set(win_set, MUIA_Window_Open, FALSE);
+    }
+    set_status(msg);
 }
 
 static void setup_notifies(void)
@@ -422,6 +529,14 @@ static void setup_notifies(void)
              (ULONG)app, 2, MUIM_Application_ReturnID, ID_STOP);
     DoMethod(lst, MUIM_Notify, MUIA_NList_DoubleClick, MUIV_EveryTime,
              (ULONG)app, 2, MUIM_Application_ReturnID, ID_DOWNLOAD);
+    DoMethod(bt_settings, MUIM_Notify, MUIA_Pressed, FALSE,
+             (ULONG)app, 2, MUIM_Application_ReturnID, ID_SETTINGS);
+    DoMethod(bt_save, MUIM_Notify, MUIA_Pressed, FALSE,
+             (ULONG)app, 2, MUIM_Application_ReturnID, ID_SET_SAVE);
+    DoMethod(bt_cancel, MUIM_Notify, MUIA_Pressed, FALSE,
+             (ULONG)app, 2, MUIM_Application_ReturnID, ID_SET_CANCEL);
+    DoMethod(win_set, MUIM_Notify, MUIA_Window_CloseRequest, TRUE,
+             (ULONG)app, 2, MUIM_Application_ReturnID, ID_SET_CANCEL);
 }
 
 int main(void)
@@ -429,7 +544,7 @@ int main(void)
     ULONG sigs = 0;
     LONG id;
     int rc = 0;
-    BPTR old_dir;
+    BPTR old_dir, nil_in = 0, nil_out = 0, old_in = 0, old_out = 0;
 
     /* whdfetch's paths ("temp/Dat files") are relative to its own
      * directory; run from there whether started from Shell or Workbench. */
@@ -453,6 +568,18 @@ int main(void)
     set(bt_stop, MUIA_Disabled, TRUE);
     set(win, MUIA_Window_Open, TRUE);
 
+    /* whdfetch's code prints progress and runs c:lha, c:unzip and protect
+     * through SystemTagList(). Send all of that to NIL:, otherwise
+     * AmigaOS opens console windows that stay on screen. */
+    nil_in = Open((STRPTR)"NIL:", MODE_OLDFILE);
+    nil_out = Open((STRPTR)"NIL:", MODE_NEWFILE);
+    if (nil_in && nil_out) {
+        old_in = SelectInput(nil_in);
+        old_out = SelectOutput(nil_out);
+        freopen("NIL:", "w", stdout);
+        freopen("NIL:", "w", stderr);
+    }
+
     /* Without a network the lists can still be browsed (E-05). */
     engine_ok = engine_init(engine_msg, sizeof(engine_msg));
     load_pack();
@@ -467,6 +594,9 @@ int main(void)
         case ID_LETTER:   apply_filter(); break;
         case ID_REFRESH:  refresh_lists(); break;
         case ID_DOWNLOAD: download_selected(); break;
+        case ID_SETTINGS: open_settings(); break;
+        case ID_SET_SAVE: save_settings(); break;
+        case ID_SET_CANCEL: set(win_set, MUIA_Window_Open, FALSE); break;
         }
         if (quit_after_download) break;
         if (sigs) {
@@ -481,6 +611,12 @@ int main(void)
     free(shown);
     gl_free(&games);
     CloseLibrary(MUIMasterBase);
+    if (old_out || old_in) {
+        SelectInput(old_in);
+        SelectOutput(old_out);
+    }
+    if (nil_in) Close(nil_in);
+    if (nil_out) Close(nil_out);
     CurrentDir(old_dir);
     return rc;
 }
