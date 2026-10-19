@@ -114,6 +114,12 @@ int main(int argc, char **argv)
         CHECK(strlen(local) == 30 && strcmp(local + 26, ".mod") == 0);
         modland_local_name("my song.mod", local);
         CHECK(strcmp(local, "my_song.mod") == 0);
+        {
+            char comp[200];
+            CHECK(modland_companion("TFMX/Chris Huelsbeck/mdat.apidya (level 1)", comp, sizeof(comp)));
+            CHECK(strcmp(comp, "TFMX/Chris Huelsbeck/smpl.apidya (level 1)") == 0);
+            CHECK(!modland_companion("Protracker/Captain/space_debris.mod", comp, sizeof(comp)));
+        }
         modland_local_name("bad:name.mod", local);
         CHECK(strcmp(local, "bad_name.mod") == 0);
         CHECK(modland_category_count() == 20);
@@ -165,7 +171,7 @@ int main(int argc, char **argv)
                 int files = 0;
                 hits = modland_collect(dir, 'C', NULL, path, 12000, &trunc, &files);
                 printf("all formats, authors C: %ld from %d files\n", hits, files);
-                CHECK(files == 1 && hits == 5753);
+                CHECK(files == 1 && hits == 5607);   /* 5753 minus 146 smpl.* (TFMX) */
                 CHECK(gl_load(&m, path, GL_FMT_AMINET));
                 for (i = 0, n = 0; i < m.count; i++) {
                     CHECK(m.items[i].dir[0] == 'C' || m.items[i].dir[0] == 'c');

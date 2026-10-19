@@ -50,6 +50,10 @@ long modland_cache_load(const char *dir);
 void modland_cache_free(void);
 int modland_cache_loaded(void);
 
+/* Second file a module needs to play, e.g. TFMX "mdat.x" -> "smpl.x" in
+ * the same directory. Returns 1 and writes its path, 0 if none. */
+int modland_companion(const char *path, char *out, int outlen);
+
 /* Percent-encodes a module path for the URL ('/' kept). 0 if too long. */
 int modland_url_encode(const char *path, char *out, int outlen);
 

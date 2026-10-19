@@ -547,7 +547,30 @@ int engine_modland_file(const char *author, const char *name, char *out, int len
     return ok;
 }
 
+static int install_modland_file(const char *path, const char *author, const char *name);
+
+/* Downloads a module; two-file formats (TFMX mdat/smpl) get both files. */
 int engine_install_modland(const char *path, const char *author, const char *name)
+{
+    char second[600];
+    int r = install_modland_file(path, author, name);
+    if ((r == ENGINE_INSTALLED || r == ENGINE_SKIPPED) &&
+        modland_companion(path, second, sizeof(second))) {
+        const char *second_name = strrchr(second, '/') + 1;
+        int r2;
+        printf("Also needed: %s\n", second_name);
+        r2 = install_modland_file(second, author, second_name);
+        if (r2 == ENGINE_CANCELLED) return ENGINE_CANCELLED;
+        if (r2 == ENGINE_FAILED) {
+            printf("Sample file missing, the module will not play: %s\n", second_name);
+            return ENGINE_FAILED;
+        }
+        if (r == ENGINE_SKIPPED && r2 == ENGINE_INSTALLED) r = ENGINE_INSTALLED;
+    }
+    return r;
+}
+
+static int install_modland_file(const char *path, const char *author, const char *name)
 {
     char url[600], enc[520], base[260], dir[300], file[340], local[40], auth[40];
     LONG rc;

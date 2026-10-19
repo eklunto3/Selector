@@ -123,6 +123,9 @@ static void handle_line(split_state *st, char *line)
     author = slash + 1;
     end = strchr(author, '/');
     if (!*name) return;
+    /* Two-file formats: the sample file is fetched together with its song
+     * file (see modland_companion), so it is not listed on its own. */
+    if (strncmp(name, "smpl.", 5) == 0) return;
     /* Files directly under the format directory have no author. */
     alen = (end && end != author) ? (size_t)(end - author) : 0;
     if (alen > 200) alen = 200;
@@ -404,6 +407,23 @@ long modland_search(const char *dir, const char *query, const char *out_path,
                     long max_hits, int *truncated)
 {
     return modland_collect(dir, 0, query, out_path, max_hits, truncated, NULL);
+}
+
+/* ---- two-file modules ---- */
+
+int modland_companion(const char *path, char *out, int outlen)
+{
+    const char *name = strrchr(path, '/');
+    size_t dir_len;
+    name = name ? name + 1 : path;
+    /* TFMX: mdat.<song> needs smpl.<song> from the same directory. */
+    if (strncmp(name, "mdat.", 5) != 0) return 0;
+    dir_len = (size_t)(name - path);
+    if ((int)(strlen(path) + 1) > outlen) return 0;
+    memcpy(out, path, dir_len);
+    strcpy(out + dir_len, "smpl.");
+    strcat(out, name + 5);
+    return 1;
 }
 
 /* ---- names and URLs ---- */
