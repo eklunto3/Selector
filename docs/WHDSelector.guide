@@ -8,12 +8,13 @@
                          @{b}WHDSelector@{ub}
                     by HiFi - enjoy the usage!
 
-  WHDSelector browses, downloads, installs and plays software from three
+  WHDSelector browses, downloads, installs and plays software from four
   sources, all in one MUI window:
 
     - Retroplay WHDLoad packs (games, demos, magazines)
     - Aminet
     - Modland music modules (Amiga formats)
+    - Scene.org party releases (Amiga compos)
 
   @{" Requirements          " link Requirements}
   @{" Installation          " link Install}
@@ -21,6 +22,7 @@
   @{" Retroplay WHDLoad     " link Retroplay}
   @{" Aminet                " link Aminet}
   @{" Modland music         " link Modland}
+  @{" Scene.org parties     " link Scene}
   @{" Playing music         " link Playing}
   @{" Settings              " link Settings}
   @{" History and log       " link History}
@@ -130,6 +132,20 @@
   both.
 @endnode
 
+@node Scene "Scene.org parties"
+@{b}Scene.org parties@{ub}
+
+  Party releases from the scene.org archive (ftp.scene.org, plain HTTP).
+  Choose a Year@{ub} and press Refresh list@{ub}: WHDSelector reads
+  every party of that year and lists the files of all compos with
+  "amiga" in their name (demo, intro, graphics, music...). This reads many
+  pages and takes a while, but only once per year.
+
+  Columns: name, party, compo and size. Downloads go to
+  <Demos directory>/<party>/<name>/; archives are extracted, disk images
+  and pictures are saved as they are.
+@endnode
+
 @node Playing "Playing music"
 @{b}Playing music@{ub}
 
@@ -150,6 +166,7 @@
   @{b}Delete archives@{ub}     remove the archive after extracting.
   @{b}Aminet directory@{ub}    where Aminet packages go.
   @{b}Music directory@{ub}     where Modland modules go.
+  @{b}Demos directory@{ub}     where scene.org entries go.
   @{b}HippoPlayer@{ub}         the HippoPlayer program, used to start it.
   @{b}WHDLoad filters@{ub}     hide AGA, CD32/CDTV, NTSC or non-English
                       titles (used on the next Refresh list).

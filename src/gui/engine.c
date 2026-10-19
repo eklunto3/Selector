@@ -21,6 +21,7 @@
 #include "gui/aminet.h"
 #include "gui/inflate.h"
 #include "gui/modland.h"
+#include "gui/scene.h"
 
 #include <dos/dostags.h>
 #include <proto/dos.h>
@@ -37,6 +38,7 @@ static int config_loaded = 0;    /* defaults + whdfetch.ini loaded */
 static char aminet_dir_buf[256]; /* aminet_extract_path from whdfetch.ini */
 static char modland_dir_buf[256]; /* modland_extract_path from whdfetch.ini */
 static char player_path_buf[256]; /* player_path (HippoPlayer) from whdfetch.ini */
+static char scene_dir_buf[256];   /* scene_extract_path from whdfetch.ini */
 static void read_aminet_setting(void);
 
 /* GUI cycle order -> whdfetch pack index (see app_constants.c). */
@@ -156,7 +158,7 @@ int engine_install(int pack, const char *archive, unsigned long size, const char
 /* ---- settings ---- */
 
 #define INI_PATH "PROGDIR:whdfetch.ini"
-#define NUM_KEYS 9
+#define NUM_KEYS 10
 
 static char install_dir_buf[256];
 
@@ -174,6 +176,7 @@ void engine_get_settings(engine_settings *s)
     strncpy(s->aminet_dir, aminet_dir_buf, sizeof(s->aminet_dir) - 1);
     strncpy(s->modland_dir, modland_dir_buf, sizeof(s->modland_dir) - 1);
     strncpy(s->player_path, player_path_buf, sizeof(s->player_path) - 1);
+    strncpy(s->scene_dir, scene_dir_buf, sizeof(s->scene_dir) - 1);
 }
 
 /* "key" or "key  =..." at the start of an ini line (after blanks). */
@@ -257,7 +260,7 @@ int engine_save_settings(const engine_settings *s, char *msg, int msg_len)
     static const char *keys[NUM_KEYS] = {
         "extract_path", "delete_archives_after_extract",
         "skip_aga", "skip_cd", "skip_ntsc", "skip_non_english",
-        "aminet_extract_path", "modland_extract_path", "player_path"
+        "aminet_extract_path", "modland_extract_path", "player_path", "scene_extract_path"
     };
     static char values[NUM_KEYS][260];
 
@@ -286,6 +289,9 @@ int engine_save_settings(const engine_settings *s, char *msg, int msg_len)
     strncpy(player_path_buf, s->player_path, sizeof(player_path_buf) - 1);
     player_path_buf[sizeof(player_path_buf) - 1] = 0;
     strcpy(values[8], player_path_buf);
+    strncpy(scene_dir_buf, s->scene_dir, sizeof(scene_dir_buf) - 1);
+    scene_dir_buf[sizeof(scene_dir_buf) - 1] = 0;
+    strcpy(values[9], scene_dir_buf);
     return write_ini(keys, values, msg, msg_len);
 }
 
@@ -299,6 +305,7 @@ static void read_aminet_setting(void)
     aminet_dir_buf[0] = 0;
     modland_dir_buf[0] = 0;
     player_path_buf[0] = 0;
+    scene_dir_buf[0] = 0;
     if (!f) return;
     while (fgets(line, sizeof(line), f)) {
         const char *end;
@@ -308,6 +315,7 @@ static void read_aminet_setting(void)
         if (line_has_key(line, "aminet_extract_path")) target = aminet_dir_buf;
         else if (line_has_key(line, "modland_extract_path")) target = modland_dir_buf;
         else if (line_has_key(line, "player_path")) target = player_path_buf;
+        else if (line_has_key(line, "scene_extract_path")) target = scene_dir_buf;
         if (target) {
             char *v = strchr(line, '=') + 1;
             size_t n;
@@ -403,15 +411,30 @@ static int ends_with(const char *s, const char *suffix)
     return n > m && strnicmp_ascii(s + n - m, suffix, m) == 0;
 }
 
+static int install_package(const char *url, const char *target, const char *sub,
+                           const char *temp_dir, const char *name);
+
 int engine_install_aminet(const char *dir, const char *name)
 {
-    char url[300], archive[300], base[260], dest[400], cmd[800], stem[128];
+    char url[300];
+    if (strlen(dir) + strlen(name) + 40 > sizeof(url)) return ENGINE_FAILED;
+    sprintf(url, "%s%s/%s", AMINET_BASE_URL, dir, name);
+    return install_package(url, engine_aminet_target(), NULL, AMINET_DIR, name);
+}
+
+/* Downloads url and extracts it into <target>[<sub>/]<name without ext>/
+ * (archives) or saves it there as it is (other files). Names are made
+ * safe for FFS (30 characters, no spaces). */
+static int install_package(const char *url, const char *target, const char *sub,
+                           const char *temp_dir, const char *name)
+{
+    char archive[300], base[300], dest[400], cmd[800], stem[40], local[40];
     const char *tool;
     char *dot;
     LONG rc;
 
     if (!initialised) return ENGINE_FAILED;
-    if (strchr(name, '"') || strchr(name, '/') || strchr(name, ':') || strlen(name) > 100)
+    if (strchr(name, '"') || strchr(name, '/') || strchr(name, ':') || strlen(name) > 200)
         return ENGINE_FAILED;
 
     /* Archives are extracted; anything else (DMS/ADF disk images, pictures,
@@ -426,12 +449,31 @@ int engine_install_aminet(const char *dir, const char *name)
         tool = NULL;
 
     /* Each package goes to its own drawer: <target>/<name without ext>. */
-    strcpy(stem, name);
-    dot = strrchr(stem, '.');
-    if (dot) *dot = 0;
-    strncpy(base, engine_aminet_target(), sizeof(base) - 1);
-    base[sizeof(base) - 1] = 0;
+    modland_local_name(name, local);
+    {
+        char tmp[256];
+        strncpy(tmp, name, sizeof(tmp) - 1);
+        tmp[sizeof(tmp) - 1] = 0;
+        dot = strrchr(tmp, '.');
+        if (dot) *dot = 0;
+        modland_local_name(tmp, stem);
+    }
+    strncpy(base, target, sizeof(base) - 40);
+    base[sizeof(base) - 40] = 0;
     if (base[0] && base[strlen(base) - 1] != '/' && base[strlen(base) - 1] != ':') strcat(base, "/");
+    if (sub && sub[0]) {
+        /* e.g. Demos/<party>/: create the target first, then the sub drawer */
+        char t[300], s[40];
+        strcpy(t, base);
+        if (t[0] && t[strlen(t) - 1] == '/') t[strlen(t) - 1] = 0;
+        if (t[0] && t[strlen(t) - 1] != ':' && !ensure_dir(t)) {
+            printf("Cannot create %s\n", t);
+            return ENGINE_FAILED;
+        }
+        modland_local_name(sub, s);
+        strcat(base, s);
+        strcat(base, "/");
+    }
     sprintf(dest, "%s%s", base, stem);
     if (path_exists(dest)) {
         printf("Already installed: %s\n", dest);
@@ -447,14 +489,13 @@ int engine_install_aminet(const char *dir, const char *name)
             return ENGINE_FAILED;
         }
     }
-    if (!ensure_dir(DIR_TEMP) || !ensure_dir(AMINET_DIR) || !ensure_dir(dest)) {
+    if (!ensure_dir(DIR_TEMP) || !ensure_dir(temp_dir) || !ensure_dir(dest)) {
         printf("Cannot create %s\n", dest);
         return ENGINE_FAILED;
     }
 
-    sprintf(url, "%s%s/%s", AMINET_BASE_URL, dir, name);
-    if (tool) sprintf(archive, "%s/%s", AMINET_DIR, name);
-    else sprintf(archive, "%s/%s", dest, name);      /* kept as it is */
+    if (tool) sprintf(archive, "%s/%s", temp_dir, local);
+    else sprintf(archive, "%s/%s", dest, local);     /* kept as it is */
     printf("Downloading %s\n", url);
     rc = ad_download_http_file_with_retries(url, archive, TRUE);
     if (rc != AD_SUCCESS) {
@@ -482,6 +523,134 @@ int engine_install_aminet(const char *dir, const char *name)
     }
     printf("Installed to %s\n", dest);
     return ENGINE_INSTALLED;
+}
+
+/* ---- Scene.org parties ---- */
+
+#define SCENE_DIR     "temp/Scene"
+#define SCENE_DEFAULT "Demos/"
+#define SCENE_MAX_DIRS 400
+
+typedef struct {
+    char (*names)[64];
+    int count;
+    int amiga_only;     /* keep only directories with "amiga" in the name */
+} dir_list;
+
+static int collect_dir(const char *name, int is_dir, unsigned long size, void *user)
+{
+    dir_list *d = (dir_list *)user;
+    if (!is_dir || d->count >= SCENE_MAX_DIRS || strlen(name) >= 64) return 0;
+    if (d->amiga_only && !scene_is_amiga_dir(name)) return 0;
+    strcpy(d->names[d->count++], name);
+    return 0;
+}
+
+typedef struct {
+    FILE *out;
+    const char *party;
+    const char *prefix;     /* "parties/<year>/<party>/<compo>" */
+    long count;
+} file_sink;
+
+static int collect_file(const char *name, int is_dir, unsigned long size, void *user)
+{
+    file_sink *s = (file_sink *)user;
+    if (is_dir || !scene_is_entry_file(name)) return 0;
+    /* name<TAB>party<TAB>size<TAB>0<TAB>path (GL_FMT_AMINET layout) */
+    fprintf(s->out, "%s\t%s\t%lu\t0\t%s/%s\n", name, s->party, size, s->prefix, name);
+    s->count++;
+    return 0;
+}
+
+/* Downloads one directory page of the party archive. */
+static int get_listing(const char *rel, const char *file)
+{
+    char url[400], enc[340];
+    if (!modland_url_encode(rel, enc, sizeof(enc))) return 0;
+    sprintf(url, "%s%s/", SCENE_BASE_URL, enc);
+    return ad_download_http_file_with_retries(url, file, TRUE) == AD_SUCCESS;
+}
+
+const char *engine_scene_dir(void) { return SCENE_DIR; }
+
+const char *engine_scene_target(void)
+{
+    return scene_dir_buf[0] ? scene_dir_buf : SCENE_DEFAULT;
+}
+
+int engine_refresh_scene(int year, char *msg, int msg_len)
+{
+    static char parties[SCENE_MAX_DIRS][64], compos[SCENE_MAX_DIRS][64], subs[SCENE_MAX_DIRS][64];
+    char rel[300], list_path[64], tmp_path[64], page[64];
+    dir_list pl, cl, sl;
+    file_sink sink;
+    int p, c, s;
+
+    if (!initialised) { set_msg(msg, msg_len, "Not initialised."); return 0; }
+    if (!ensure_dir(DIR_TEMP) || !ensure_dir(SCENE_DIR)) {
+        set_msg(msg, msg_len, "Cannot create " SCENE_DIR);
+        return 0;
+    }
+    sprintf(page, "%s/page.html", SCENE_DIR);
+    sprintf(list_path, "%s/%d.txt", SCENE_DIR, year);
+    sprintf(tmp_path, "%s.tmp", list_path);
+
+    sprintf(rel, "parties/%d", year);
+    printf("Reading %s%s/\n", SCENE_BASE_URL, rel);
+    if (!get_listing(rel, page)) {
+        set_msg(msg, msg_len, "Could not read the scene.org party list for that year.");
+        return 0;
+    }
+    pl.names = parties; pl.count = 0; pl.amiga_only = 0;
+    scene_parse_listing(page, collect_dir, &pl);
+    printf("%d parties in %d\n", pl.count, year);
+
+    sink.out = fopen(tmp_path, "w");
+    if (!sink.out) { set_msg(msg, msg_len, "Cannot write " SCENE_DIR); return 0; }
+    sink.count = 0;
+
+    for (p = 0; p < pl.count; p++) {
+        if (SetSignal(0, 0) & SIGBREAKF_CTRL_C) break;
+        sprintf(rel, "parties/%d/%s", year, parties[p]);
+        if (!get_listing(rel, page)) { printf("Skipped %s (download failed)\n", parties[p]); continue; }
+        cl.names = compos; cl.count = 0; cl.amiga_only = 1;
+        scene_parse_listing(page, collect_dir, &cl);
+        for (c = 0; c < cl.count; c++) {
+            char prefix[300];
+            sprintf(prefix, "parties/%d/%s/%s", year, parties[p], compos[c]);
+            if (!get_listing(prefix, page)) continue;
+            printf("%s: %s\n", parties[p], compos[c]);
+            sink.party = parties[p];
+            sink.prefix = prefix;
+            scene_parse_listing(page, collect_file, &sink);
+            /* Entries in their own sub-drawers (one level down). */
+            sl.names = subs; sl.count = 0; sl.amiga_only = 0;
+            scene_parse_listing(page, collect_dir, &sl);
+            for (s = 0; s < sl.count; s++) {
+                char sub_prefix[300];
+                if (strlen(prefix) + strlen(subs[s]) + 2 >= sizeof(sub_prefix)) continue;
+                sprintf(sub_prefix, "%s/%s", prefix, subs[s]);
+                if (!get_listing(sub_prefix, page)) continue;
+                sink.prefix = sub_prefix;
+                scene_parse_listing(page, collect_file, &sink);
+            }
+        }
+    }
+    DeleteFile((STRPTR)page);
+    if (fclose(sink.out) != 0) { remove(tmp_path); set_msg(msg, msg_len, "Cannot write the list."); return 0; }
+    remove(list_path);
+    if (rename(tmp_path, list_path) != 0) { set_msg(msg, msg_len, "Cannot write the list."); return 0; }
+    printf("Scene.org %d: %ld Amiga entries\n", year, sink.count);
+    return 1;
+}
+
+int engine_install_scene(const char *path, const char *party, const char *name)
+{
+    char url[500], enc[420];
+    if (!modland_url_encode(path, enc, sizeof(enc))) return ENGINE_FAILED;
+    sprintf(url, "%s%s", SCENE_BASE_URL, enc);
+    return install_package(url, engine_scene_target(), party, SCENE_DIR, name);
 }
 
 /* ---- Modland ---- */

@@ -7,6 +7,8 @@
 #include "gui/aminet.h"
 #include "gui/game_list.h"
 #include "gui/modland.h"
+#include "gui/scene.h"
+#include "gui/scene.h"
 #include <sys/stat.h>
 
 static void mkdir_p(const char *d) { mkdir(d, 0755); }
@@ -29,6 +31,45 @@ static int files_equal(const char *a, const char *b)
     return eq;
 }
 
+/* ---- scene.org listings ---- */
+
+typedef struct { int dirs, amiga_dirs, files, entries, saw_lambings; unsigned long lambings_size; } scene_stats;
+
+static int on_scene(const char *name, int is_dir, unsigned long size, void *user)
+{
+    scene_stats *s = (scene_stats *)user;
+    if (is_dir) {
+        s->dirs++;
+        if (scene_is_amiga_dir(name)) s->amiga_dirs++;
+    } else {
+        s->files++;
+        if (scene_is_entry_file(name)) s->entries++;
+        if (strcmp(name, "lambings.zip") == 0) { s->saw_lambings = 1; s->lambings_size = size; }
+    }
+    return 0;
+}
+
+static void test_scene(void)
+{
+    scene_stats s;
+    CHECK(scene_parse_size("136.3K") == 136UL * 1024 + 3UL * 1024 / 10);
+    CHECK(scene_parse_size("1.4M") == 1048576UL + 4UL * 1048576 / 10);
+    CHECK(scene_parse_size("-") == 0);
+    CHECK(scene_is_amiga_dir("amiga-demo") && scene_is_amiga_dir("Intro_AMIGA") && !scene_is_amiga_dir("pc-demo"));
+    CHECK(scene_is_entry_file("demo.zip") && !scene_is_entry_file("demo.diz") && !scene_is_entry_file("x.TXT"));
+
+    memset(&s, 0, sizeof(s));
+    CHECK(scene_parse_listing("tests/fixtures/scene_party.html", on_scene, &s) > 10);
+    printf("revision25: %d dirs, %d amiga\n", s.dirs, s.amiga_dirs);
+    CHECK(s.amiga_dirs == 2);                  /* amiga-demo, amiga-intro */
+
+    memset(&s, 0, sizeof(s));
+    CHECK(scene_parse_listing("tests/fixtures/scene_compo.html", on_scene, &s) > 10);
+    printf("revision25/amiga-demo: %d files, %d entries\n", s.files, s.entries);
+    CHECK(s.dirs == 0 && s.files == 27 && s.entries == 17);
+    CHECK(s.saw_lambings && s.lambings_size == 4UL * 1048576 + 4UL * 1048576 / 10);
+}
+
 int main(int argc, char **argv)
 {
     char out[512], path[512];
@@ -38,6 +79,8 @@ int main(int argc, char **argv)
     int found_aaa = 0;
 
     if (argc < 4) { printf("usage: test_gui <work> <INDEX.gz> <INDEX>\n"); return 2; }
+
+    test_scene();
 
     CHECK(aminet_parse_size("671K") == 671UL * 1024);
     CHECK(aminet_parse_size("0K") == 0);

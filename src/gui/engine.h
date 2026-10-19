@@ -43,6 +43,16 @@ const char *engine_modland_dir(void);
 int engine_install_modland(const char *path, const char *author, const char *name);
 const char *engine_modland_target(void);
 
+/* Scene.org: crawls parties/<year>/ for compo directories with "amiga"
+ * in their name and writes temp/Scene/<year>.txt. Returns 0 on failure. */
+int engine_refresh_scene(int year, char *msg, int msg_len);
+const char *engine_scene_dir(void);
+
+/* Downloads a scene.org entry (path below pub/) and extracts it into
+ * <Demos target>/<party>/<name without ext>/. ENGINE_* result. */
+int engine_install_scene(const char *path, const char *party, const char *name);
+const char *engine_scene_target(void);
+
 /* Absolute path of a downloaded module; 0 if it is not on disk. */
 int engine_modland_file(const char *author, const char *name, char *out, int len);
 
@@ -62,6 +72,7 @@ typedef struct {
     char aminet_dir[256];    /* "" = Aminet/ in the program directory */
     char modland_dir[256];   /* "" = Music/ in the program directory */
     char player_path[256];   /* HippoPlayer program, used if it is not running */
+    char scene_dir[256];     /* "" = Demos/ in the program directory */
 } engine_settings;
 
 void engine_get_settings(engine_settings *s);

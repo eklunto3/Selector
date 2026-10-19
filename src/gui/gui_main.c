@@ -31,6 +31,7 @@
 #include "gui/activity_log.h"
 #include "gui/aminet.h"
 #include "gui/modland.h"
+#include "gui/scene.h"
 #include "gui/hippo.h"
 #include "gui/clip.h"
 #include "gui/logo_data.h"
@@ -43,7 +44,7 @@ extern const char *WHDLOAD_FILE_FILTER_DAT_MAGAZINES;
 extern const char *DIR_DAT_FILES;
 
 size_t __stack = 131072;   /* same as whdfetch */
-static const char version[] = "$VER: WHDSelector 2.0 (19.10.2026)";
+static const char version[] = "$VER: WHDSelector 2.1 (19.10.2026)";
 
 struct Library *MUIMasterBase;
 
@@ -113,8 +114,36 @@ static char list_file[256];
 #define SRC_RETROPLAY 0
 #define SRC_AMINET    1
 #define SRC_MODLAND   2
+#define SRC_SCENE     3
 static int source = SRC_RETROPLAY;
 static Object *cy_source, *grp_pages, *cy_cat, *str_amidir, *cy_mod, *str_moddir;
+static Object *cy_year, *str_scenedir;
+
+/* Scene.org: one list per year, newest first. */
+#define YEAR_COUNT 40
+static char year_store[YEAR_COUNT][6];
+static const char *year_labels[YEAR_COUNT + 1];
+static int newest_year;
+
+static void init_year_labels(void)
+{
+    time_t t = time(NULL);
+    struct tm *tm = localtime(&t);
+    int i, n = 0;
+    newest_year = tm ? tm->tm_year + 1900 : 2026;
+    for (i = newest_year; i >= SCENE_FIRST_YEAR && n < YEAR_COUNT; i--, n++) {
+        sprintf(year_store[n], "%d", i);
+        year_labels[n] = year_store[n];
+    }
+    year_labels[n] = NULL;
+}
+
+static int selected_year(void)
+{
+    LONG y = 0;
+    get(cy_year, MUIA_Cycle_Active, &y);
+    return newest_year - (int)y;
+}
 static void load_pack(void);
 static int mod_search_mode(void);
 static int need_search;        /* Modland search mode without results yet */
@@ -174,11 +203,13 @@ static void modland_search_all(void)
     }
 }
 
-static const char *source_labels[] = { "Retroplay WHDLoad", "Aminet", "Modland (music)", NULL };
+static const char *source_labels[] = { "Retroplay WHDLoad", "Aminet", "Modland (music)",
+                                       "Scene.org parties", NULL };
 
 #define FORMAT_RETROPLAY "DELTA=16 W=55,DELTA=16 W=10,DELTA=16 W=25,P=\33r W=10"
 #define FORMAT_AMINET    "DELTA=16 W=20,DELTA=16 W=11,DELTA=16 P=\33r W=7,DELTA=16 W=9,W=53"
 #define FORMAT_MODLAND   "DELTA=16 W=45,DELTA=16 W=25,DELTA=16 W=18,P=\33r W=12"
+#define FORMAT_SCENE     "DELTA=16 W=40,DELTA=16 W=20,DELTA=16 W=25,P=\33r W=15"
 
 /* Aminet "category" gadget: Recent first (the default view, like the
  * Aminet front page), then the 16 top-level categories. */
@@ -209,6 +240,37 @@ static ULONG display_func(__reg("a0") struct Hook *hook, __reg("a2") char **arra
     static char size_buf[16];
     static char info[300];
     static game_metadata meta;
+
+    if (source == SRC_SCENE) {
+        /* Scene.org columns: name, party, compo, size. */
+        static char compo_buf[40];
+        const char *p;
+        int part;
+        size_t n = 0;
+        if (!e) {
+            array[0] = "\33bName";
+            array[1] = "\33bParty";
+            array[2] = "\33bCompo";
+            array[3] = "\33bSize";
+            return 0;
+        }
+        /* path = parties/<year>/<party>/<compo>/... : 4th part */
+        for (p = e->desc, part = 0; *p && part < 3; p++)
+            if (*p == '/') part++;
+        while (p[n] && p[n] != '/' && n < sizeof(compo_buf) - 1) n++;
+        memcpy(compo_buf, p, n);
+        compo_buf[n] = 0;
+        if (e->size >= 1024UL * 1024UL)
+            sprintf(size_buf, "%lu.%lu MB", e->size / (1024UL * 1024UL),
+                    (e->size % (1024UL * 1024UL)) * 10 / (1024UL * 1024UL));
+        else
+            sprintf(size_buf, "%lu KB", (e->size + 1023) / 1024);
+        array[0] = (char *)e->name;
+        array[1] = (char *)e->dir;
+        array[2] = compo_buf;
+        array[3] = size_buf;
+        return 0;
+    }
 
     if (source == SRC_MODLAND) {
         /* Modland columns: module, author, format, size. */
@@ -397,7 +459,11 @@ static void load_pack(void)
     list_file[0] = 0;
     need_search = 0;
 
-    if (source == SRC_MODLAND) {
+    if (source == SRC_SCENE) {
+        sprintf(list_file, "%s/%d.txt", engine_scene_dir(), selected_year());
+        found = gl_load(&games, list_file, GL_FMT_AMINET);
+        if (!found) alog("Scene.org %d: no list yet - press Refresh list", selected_year());
+    } else if (source == SRC_MODLAND) {
         LONG letter = 0;
         int l;
         get(cy_mod, MUIA_Cycle_Active, &pack);
@@ -458,7 +524,8 @@ static void switch_source(void)
     get(cy_source, MUIA_Cycle_Active, &s);
     source = (int)s;
     set(grp_pages, MUIA_Group_ActivePage, s);
-    set(lst, MUIA_NList_Format, (ULONG)(source == SRC_MODLAND ? FORMAT_MODLAND :
+    set(lst, MUIA_NList_Format, (ULONG)(source == SRC_SCENE ? FORMAT_SCENE :
+                                        source == SRC_MODLAND ? FORMAT_MODLAND :
                                         source == SRC_AMINET ? FORMAT_AMINET : FORMAT_RETROPLAY));
     load_pack();
     alog("Source: %s", source_labels[source]);
@@ -477,7 +544,10 @@ static void refresh_lists(void)
     }
     set(app, MUIA_Application_Sleep, TRUE);
     msg[0] = 0;
-    if (source == SRC_MODLAND) {
+    if (source == SRC_SCENE) {
+        set_status("Reading the scene.org party archive for this year (many pages, takes a while)...");
+        alog("Refresh: scene.org parties %d...", selected_year());
+    } else if (source == SRC_MODLAND) {
         set_status("Fetching the Modland index (about 5.8 MB, this takes a while)...");
         alog("Refresh: downloading Modland allmods.zip...");
     } else if (source == SRC_AMINET) {
@@ -488,7 +558,8 @@ static void refresh_lists(void)
         alog("Refresh: downloading index page and DAT files...");
     }
     alog_capture_begin();
-    if (!(source == SRC_MODLAND ? engine_refresh_modland(msg, sizeof(msg)) :
+    if (!(source == SRC_SCENE ? engine_refresh_scene(selected_year(), msg, sizeof(msg)) :
+          source == SRC_MODLAND ? engine_refresh_modland(msg, sizeof(msg)) :
           source == SRC_AMINET ? engine_refresh_aminet(msg, sizeof(msg))
                                : engine_refresh_lists(msg, sizeof(msg)))) {
         alog_capture_end();
@@ -571,7 +642,9 @@ static void download_selected(void)
         alog("Download %ld/%ld: %s (%lu KB)", i + 1, n, todo[i]->name,
              (todo[i]->size + 1023) / 1024);
         alog_capture_begin();
-        if (source == SRC_MODLAND)
+        if (source == SRC_SCENE)
+            r = engine_install_scene(todo[i]->desc, todo[i]->dir, todo[i]->name);
+        else if (source == SRC_MODLAND)
             r = engine_install_modland(todo[i]->desc, todo[i]->dir, todo[i]->name);
         else if (source == SRC_AMINET)
             r = engine_install_aminet(todo[i]->dir, todo[i]->name);
@@ -598,9 +671,7 @@ static void download_selected(void)
     free(todo);
 
     sprintf(status, "%s%d installed, %d already there, %d failed. Target: %.150s",
-            stopped ? "Stopped. " : "Done. ", installed, skipped, failed,
-            source == SRC_MODLAND ? engine_modland_target() :
-            source == SRC_AMINET ? engine_aminet_target() : engine_extract_target());
+            stopped ? "Stopped. " : "Done. ", installed, skipped, failed, current_target());
     set_status(status);
     alog("%s", status);
 }
@@ -817,12 +888,14 @@ static void history_clear(void)
 
 static const char *source_short(void)
 {
-    return source == SRC_MODLAND ? "Modland" : source == SRC_AMINET ? "Aminet" : "WHDLoad";
+    return source == SRC_SCENE ? "Scene" : source == SRC_MODLAND ? "Modland" :
+           source == SRC_AMINET ? "Aminet" : "WHDLoad";
 }
 
 static const char *current_target(void)
 {
-    return source == SRC_MODLAND ? engine_modland_target() :
+    return source == SRC_SCENE ? engine_scene_target() :
+           source == SRC_MODLAND ? engine_modland_target() :
            source == SRC_AMINET ? engine_aminet_target() : engine_extract_target();
 }
 
@@ -882,6 +955,12 @@ static Object *build_app(void)
                             Child, Label2("Format:"),
                             Child, cy_mod = CycleObject,
                                 MUIA_Cycle_Entries, (ULONG)mod_cycle_labels,
+                            End,
+                        End,
+                        Child, HGroup,
+                            Child, Label2("Year:"),
+                            Child, cy_year = CycleObject,
+                                MUIA_Cycle_Entries, (ULONG)year_labels,
                             End,
                         End,
                     End,
@@ -1048,6 +1127,25 @@ static Object *build_app(void)
                     End,
                 End,
 
+                Child, VGroup, GroupFrameT("Scene.org parties"),
+                    Child, HGroup,
+                        Child, Label2("Demos directory:"),
+                        Child, PopaslObject,
+                            MUIA_Popstring_String, str_scenedir = StringObject,
+                                StringFrame,
+                                MUIA_String_MaxLen, 255,
+                                MUIA_CycleChain, 1,
+                            End,
+                            MUIA_Popstring_Button, PopButton(MUII_PopDrawer),
+                            ASLFR_TitleText, (ULONG)"Select demos directory",
+                            ASLFR_DrawersOnly, TRUE,
+                        End,
+                    End,
+                    Child, TextObject,
+                        MUIA_Text_Contents, (ULONG)"\33cEntries go to <directory>/<party>/<name>/. Empty = Demos in the program directory",
+                    End,
+                End,
+
                 Child, VGroup, GroupFrameT("WHDLoad list filters (applied on Refresh list)"),
                     Child, ColGroup(4),
                         Child, cm_aga = CheckMark(FALSE),
@@ -1081,6 +1179,7 @@ static void open_settings(void)
     set(str_amidir, MUIA_String_Contents, (ULONG)s.aminet_dir);
     set(str_moddir, MUIA_String_Contents, (ULONG)s.modland_dir);
     set(str_player, MUIA_String_Contents, (ULONG)s.player_path);
+    set(str_scenedir, MUIA_String_Contents, (ULONG)s.scene_dir);
     set(cm_delete, MUIA_Selected, s.delete_archives);
     set(cm_aga, MUIA_Selected, s.skip_aga);
     set(cm_cd, MUIA_Selected, s.skip_cd);
@@ -1133,6 +1232,15 @@ static void save_settings(void)
     dir = NULL;
     get(str_player, MUIA_String_Contents, &dir);
     if (dir) strncpy(s.player_path, (const char *)dir, sizeof(s.player_path) - 1);
+    dir = NULL;
+    get(str_scenedir, MUIA_String_Contents, &dir);
+    if (dir) {
+        strncpy(s.scene_dir, (const char *)dir, sizeof(s.scene_dir) - 2);
+        if (s.scene_dir[0]) {
+            char last = s.scene_dir[strlen(s.scene_dir) - 1];
+            if (last != ':' && last != '/') strcat(s.scene_dir, "/");
+        }
+    }
     s.delete_archives = (int)checked(cm_delete);
     s.skip_aga = (int)checked(cm_aga);
     s.skip_cd = (int)checked(cm_cd);
@@ -1154,6 +1262,8 @@ static void setup_notifies(void)
     DoMethod(cy_pack, MUIM_Notify, MUIA_Cycle_Active, MUIV_EveryTime,
              (ULONG)app, 2, MUIM_Application_ReturnID, ID_PACK);
     DoMethod(cy_mod, MUIM_Notify, MUIA_Cycle_Active, MUIV_EveryTime,
+             (ULONG)app, 2, MUIM_Application_ReturnID, ID_PACK);
+    DoMethod(cy_year, MUIM_Notify, MUIA_Cycle_Active, MUIV_EveryTime,
              (ULONG)app, 2, MUIM_Application_ReturnID, ID_PACK);
     DoMethod(cy_cat, MUIM_Notify, MUIA_Cycle_Active, MUIV_EveryTime,
              (ULONG)app, 2, MUIM_Application_ReturnID, ID_PACK);
@@ -1200,6 +1310,7 @@ int main(void)
     init_letters();
     init_cat_labels();
     init_mod_labels();
+    init_year_labels();
     MUIMasterBase = OpenLibrary((STRPTR)MUIMASTER_NAME, 19);
     if (!MUIMasterBase) {
         printf("WHDSelector needs MUI 3.8 or newer (muimaster.library v19).\n");
