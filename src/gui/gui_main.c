@@ -5,8 +5,7 @@
  * to "temp/Dat files/"; "Refresh list" runs whdfetch itself to update them
  * (DOWNLOADALL ESTIMATESPACE fetches DATs only, no game archives).
  *
- * MUI 3.8 features and NList.mcc only. UI texts are Latin-1 (octal
- * escapes) because the Amiga does not use UTF-8. */
+ * MUI 3.8 features and NList.mcc only. All UI texts are English. */
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -23,6 +22,7 @@
 #include <clib/alib_protos.h>
 
 #include "gui/game_list.h"
+#include "gamefile_parser.h"
 
 extern const char *WHDLOAD_FILE_FILTER_DAT_GAMES;
 extern const char *WHDLOAD_FILE_FILTER_DAT_GAMES_BETA_AND_UNRELEASED;
@@ -32,7 +32,7 @@ extern const char *WHDLOAD_FILE_FILTER_DAT_MAGAZINES;
 extern const char *DIR_DAT_FILES;
 
 size_t __stack = 65536;
-static const char version[] = "$VER: WHDSelector 0.1 (19.10.2026)";
+static const char version[] = "$VER: WHDSelector 0.2 (19.10.2026)";
 
 struct Library *MUIMasterBase;
 
@@ -57,14 +57,14 @@ static const char *pack_filter(int index)
     }
 }
 
-/* "Kaikki", "0-9", "A".."Z" */
+/* "All", "0-9", "A".."Z" */
 static char letter_store[26][2];
 static const char *letter_labels[29];
 
 static void init_letters(void)
 {
     int i;
-    letter_labels[0] = "Kaikki";
+    letter_labels[0] = "All";
     letter_labels[1] = "0-9";
     for (i = 0; i < 26; i++) {
         letter_store[i][0] = (char)('A' + i);
@@ -90,22 +90,49 @@ static char list_file[256];
 
 /* ---- NList display hook ---- */
 
+static void add_info(char *info, const char *part)
+{
+    if (info[0]) strcat(info, ", ");
+    strcat(info, part);
+}
+
+/* Columns: title, version, info (only what differs from the usual
+ * OCS / PAL / floppy / English defaults), size. The archive name is
+ * split with whdfetch's own parser (gamefile_parser.c). */
 static ULONG display_func(__reg("a0") struct Hook *hook, __reg("a2") char **array,
                           __reg("a1") gl_entry *e)
 {
     static char size_buf[16];
+    static char info[300];
+    static game_metadata meta;
+
     if (!e) {
-        array[0] = "\33bArkisto";
-        array[1] = "\33bKoko";
+        array[0] = "\33bTitle";
+        array[1] = "\33bVersion";
+        array[2] = "\33bInfo";
+        array[3] = "\33bSize";
         return 0;
     }
+    memset(&meta, 0, sizeof(meta));
+    extract_game_info_from_filename(e->name, &meta);
+
+    info[0] = 0;
+    if (strcmp(meta.machineType, "OCS") != 0) add_info(info, meta.machineType);
+    if (strcmp(meta.mediaFormat, "Floppy") != 0) add_info(info, meta.mediaFormat);
+    if (strcmp(meta.videoFormat, "PAL") != 0) add_info(info, meta.videoFormat);
+    if (strcmp(meta.language, "English") != 0 && strlen(info) + strlen(meta.language) < 200)
+        add_info(info, meta.language);
+
     if (e->size >= 1024UL * 1024UL)
         sprintf(size_buf, "%lu.%lu MB", e->size / (1024UL * 1024UL),
                 (e->size % (1024UL * 1024UL)) * 10 / (1024UL * 1024UL));
     else
         sprintf(size_buf, "%lu KB", (e->size + 1023) / 1024);
-    array[0] = (char *)e->name;
-    array[1] = size_buf;
+
+    array[0] = meta.title[0] ? meta.title : (char *)e->name;
+    array[1] = meta.version;
+    array[2] = info;
+    array[3] = size_buf;
     return 0;
 }
 
@@ -179,9 +206,9 @@ static void apply_filter(void)
     set(lst, MUIA_NList_Quiet, FALSE);
 
     if (games.count > 0)
-        sprintf(status, "N\344ytet\344\344n %ld / %ld  (%s)", n, games.count, FilePart((STRPTR)list_file));
+        sprintf(status, "Showing %ld of %ld  (%s)", n, games.count, FilePart((STRPTR)list_file));
     else
-        sprintf(status, "Listaa ei l\366ytynyt. Paina \"P\344ivit\344 lista\".");
+        sprintf(status, "No list found. Press \"Refresh list\".");
     set_status(status);
 }
 
@@ -210,7 +237,7 @@ static void refresh_lists(void)
     LONG rc;
 
     set(app, MUIA_Application_Sleep, TRUE);
-    set_status("Haetaan uusimmat listat whdfetchill\344...");
+    set_status("Fetching the latest lists with whdfetch...");
 
     prog_dir = Lock((STRPTR)"PROGDIR:", ACCESS_READ);
     con = Open((STRPTR)"CON:20/20/600/180/whdfetch/AUTO/CLOSE/WAIT", MODE_NEWFILE);
@@ -218,7 +245,7 @@ static void refresh_lists(void)
         if (con) Close(con);
         if (prog_dir) UnLock(prog_dir);
         set(app, MUIA_Application_Sleep, FALSE);
-        set_status("whdfetchin k\344ynnistys ep\344onnistui.");
+        set_status("Could not start whdfetch.");
         return;
     }
     old_dir = CurrentDir(prog_dir);
@@ -231,7 +258,7 @@ static void refresh_lists(void)
 
     if (rc != 0) {
         static char msg[80];
-        sprintf(msg, "whdfetch p\344\344ttyi virheeseen (koodi %ld).", (long)rc);
+        sprintf(msg, "whdfetch failed (return code %ld).", (long)rc);
         set_status(msg);
         return;
     }
@@ -245,8 +272,8 @@ static Object *build_app(void)
     return ApplicationObject,
         MUIA_Application_Title, (ULONG)"WHDSelector",
         MUIA_Application_Version, (ULONG)version,
-        MUIA_Application_Copyright, (ULONG)"Henkil\366kohtainen k\344ytt\366",
-        MUIA_Application_Description, (ULONG)"Retroplay WHDLoad -pakettien selain",
+        MUIA_Application_Copyright, (ULONG)"Personal use",
+        MUIA_Application_Description, (ULONG)"Browser for Retroplay WHDLoad packs",
         MUIA_Application_Base, (ULONG)"WHDSELECTOR",
 
         SubWindow, win = WindowObject,
@@ -255,18 +282,18 @@ static Object *build_app(void)
             WindowContents, VGroup,
 
                 Child, HGroup,
-                    Child, Label2("Paketti:"),
+                    Child, Label2("Pack:"),
                     Child, cy_pack = CycleObject,
                         MUIA_Cycle_Entries, (ULONG)pack_labels,
                     End,
-                    Child, Label2("Alkukirjain:"),
+                    Child, Label2("Letter:"),
                     Child, cy_letter = CycleObject,
                         MUIA_Cycle_Entries, (ULONG)letter_labels,
                     End,
                 End,
 
                 Child, HGroup,
-                    Child, Label2("Haku:"),
+                    Child, Label2("Search:"),
                     Child, str_search = StringObject,
                         StringFrame,
                         MUIA_String_MaxLen, 100,
@@ -277,7 +304,7 @@ static Object *build_app(void)
                 Child, lv_list = NListviewObject,
                     MUIA_CycleChain, 1,
                     MUIA_NListview_NList, lst = NListObject,
-                        MUIA_NList_Format, (ULONG)"BAR,P=\33r",
+                        MUIA_NList_Format, (ULONG)"BAR,BAR,BAR,P=\33r",
                         MUIA_NList_Title, TRUE,
                         MUIA_NList_DisplayHook, (ULONG)&display_hook,
                         MUIA_NList_Input, TRUE,
@@ -285,7 +312,7 @@ static Object *build_app(void)
                 End,
 
                 Child, HGroup,
-                    Child, bt_refresh = SimpleButton("_P\344ivit\344 lista"),
+                    Child, bt_refresh = SimpleButton("_Refresh list"),
                     Child, HSpace(0),
                 End,
 
