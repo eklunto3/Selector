@@ -36,7 +36,7 @@ extern const char *WHDLOAD_FILE_FILTER_DAT_MAGAZINES;
 extern const char *DIR_DAT_FILES;
 
 size_t __stack = 131072;   /* same as whdfetch */
-static const char version[] = "$VER: WHDSelector 0.7 (19.10.2026)";
+static const char version[] = "$VER: WHDSelector 0.8 (19.10.2026)";
 
 struct Library *MUIMasterBase;
 

@@ -381,14 +381,16 @@ int engine_install_aminet(const char *dir, const char *name)
     if (strchr(name, '"') || strchr(name, '/') || strchr(name, ':') || strlen(name) > 100)
         return ENGINE_FAILED;
 
+    /* Archives are extracted; anything else (DMS/ADF disk images, pictures,
+     * music, documents) is saved as it is into the package drawer. */
     if (ends_with(name, ".lha") || ends_with(name, ".lzh"))
         tool = "c:lha -T -M -N -m x \"%s\" \"%s/\"";
     else if (ends_with(name, ".lzx"))
         tool = "c:unlzx -m x \"%s\" \"%s/\"";
-    else {
-        printf("Not an LhA/LZX archive, cannot extract: %s\n", name);
-        return ENGINE_FAILED;
-    }
+    else if (ends_with(name, ".zip"))
+        tool = "unzip -o -qq \"%s\" -d \"%s\"";   /* same unzip whdfetch uses */
+    else
+        tool = NULL;
 
     /* Each package goes to its own drawer: <target>/<name without ext>. */
     strcpy(stem, name);
@@ -418,13 +420,22 @@ int engine_install_aminet(const char *dir, const char *name)
     }
 
     sprintf(url, "%s%s/%s", AMINET_BASE_URL, dir, name);
-    sprintf(archive, "%s/%s", AMINET_DIR, name);
+    if (tool) sprintf(archive, "%s/%s", AMINET_DIR, name);
+    else sprintf(archive, "%s/%s", dest, name);      /* kept as it is */
     printf("Downloading %s\n", url);
     rc = ad_download_http_file_with_retries(url, archive, TRUE);
-    if (rc == 20) return ENGINE_CANCELLED;
     if (rc != AD_SUCCESS) {
+        /* Remove the (still empty) drawer so a retry is not "installed". */
+        DeleteFile((STRPTR)archive);
+        DeleteFile((STRPTR)dest);
+        if (rc == 20) return ENGINE_CANCELLED;
         printf("Download failed: %s\n", url);
         return ENGINE_FAILED;
+    }
+
+    if (!tool) {
+        printf("Saved without extracting (not an archive): %s\n", archive);
+        return ENGINE_INSTALLED;
     }
 
     sprintf(cmd, tool, archive, dest);
@@ -432,7 +443,10 @@ int engine_install_aminet(const char *dir, const char *name)
     rc = SystemTagList((STRPTR)cmd, NULL);
     printf("Extractor returned %ld\n", (long)rc);
     if (options.delete_archives_after_extract == TRUE) DeleteFile((STRPTR)archive);
-    if (rc != 0) return ENGINE_FAILED;
+    if (rc != 0) {
+        DeleteFile((STRPTR)dest);   /* only succeeds if nothing was extracted */
+        return ENGINE_FAILED;
+    }
     printf("Installed to %s\n", dest);
     return ENGINE_INSTALLED;
 }
