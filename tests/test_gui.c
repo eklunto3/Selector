@@ -112,6 +112,8 @@ int main(int argc, char **argv)
         CHECK(strcmp(local, "short.mod") == 0);
         modland_local_name("a very long module name that does not fit.mod", local);
         CHECK(strlen(local) == 30 && strcmp(local + 26, ".mod") == 0);
+        modland_local_name("my song.mod", local);
+        CHECK(strcmp(local, "my_song.mod") == 0);
         modland_local_name("bad:name.mod", local);
         CHECK(strcmp(local, "bad_name.mod") == 0);
         CHECK(modland_category_count() == 20);

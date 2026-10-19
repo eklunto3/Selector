@@ -36,6 +36,7 @@ static int initialised = 0;      /* network ready */
 static int config_loaded = 0;    /* defaults + whdfetch.ini loaded */
 static char aminet_dir_buf[256]; /* aminet_extract_path from whdfetch.ini */
 static char modland_dir_buf[256]; /* modland_extract_path from whdfetch.ini */
+static char player_path_buf[256]; /* player_path (HippoPlayer) from whdfetch.ini */
 static void read_aminet_setting(void);
 
 /* GUI cycle order -> whdfetch pack index (see app_constants.c). */
@@ -155,7 +156,7 @@ int engine_install(int pack, const char *archive, unsigned long size, const char
 /* ---- settings ---- */
 
 #define INI_PATH "PROGDIR:whdfetch.ini"
-#define NUM_KEYS 8
+#define NUM_KEYS 9
 
 static char install_dir_buf[256];
 
@@ -172,6 +173,7 @@ void engine_get_settings(engine_settings *s)
     s->skip_non_english = skip_NonEnglish != 0;
     strncpy(s->aminet_dir, aminet_dir_buf, sizeof(s->aminet_dir) - 1);
     strncpy(s->modland_dir, modland_dir_buf, sizeof(s->modland_dir) - 1);
+    strncpy(s->player_path, player_path_buf, sizeof(s->player_path) - 1);
 }
 
 /* "key" or "key  =..." at the start of an ini line (after blanks). */
@@ -255,7 +257,7 @@ int engine_save_settings(const engine_settings *s, char *msg, int msg_len)
     static const char *keys[NUM_KEYS] = {
         "extract_path", "delete_archives_after_extract",
         "skip_aga", "skip_cd", "skip_ntsc", "skip_non_english",
-        "aminet_extract_path", "modland_extract_path"
+        "aminet_extract_path", "modland_extract_path", "player_path"
     };
     static char values[NUM_KEYS][260];
 
@@ -281,6 +283,9 @@ int engine_save_settings(const engine_settings *s, char *msg, int msg_len)
     strncpy(modland_dir_buf, s->modland_dir, sizeof(modland_dir_buf) - 1);
     modland_dir_buf[sizeof(modland_dir_buf) - 1] = 0;
     strcpy(values[7], modland_dir_buf);
+    strncpy(player_path_buf, s->player_path, sizeof(player_path_buf) - 1);
+    player_path_buf[sizeof(player_path_buf) - 1] = 0;
+    strcpy(values[8], player_path_buf);
     return write_ini(keys, values, msg, msg_len);
 }
 
@@ -293,6 +298,7 @@ static void read_aminet_setting(void)
     int in_global = 0;
     aminet_dir_buf[0] = 0;
     modland_dir_buf[0] = 0;
+    player_path_buf[0] = 0;
     if (!f) return;
     while (fgets(line, sizeof(line), f)) {
         const char *end;
@@ -301,6 +307,7 @@ static void read_aminet_setting(void)
         if (!in_global) continue;
         if (line_has_key(line, "aminet_extract_path")) target = aminet_dir_buf;
         else if (line_has_key(line, "modland_extract_path")) target = modland_dir_buf;
+        else if (line_has_key(line, "player_path")) target = player_path_buf;
         if (target) {
             char *v = strchr(line, '=') + 1;
             size_t n;
@@ -514,6 +521,30 @@ int engine_refresh_modland(char *msg, int msg_len)
     }
     printf("Modland: %ld Amiga modules\n", count);
     return 1;
+}
+
+const char *engine_player_path(void) { return player_path_buf; }
+
+/* Full path of a downloaded module, as engine_install_modland saves it. */
+int engine_modland_file(const char *author, const char *name, char *out, int len)
+{
+    char base[260], local[40], auth[40], rel[340];
+    BPTR lock;
+    int ok;
+
+    strncpy(base, engine_modland_target(), sizeof(base) - 2);
+    base[sizeof(base) - 2] = 0;
+    if (base[0] && base[strlen(base) - 1] != '/' && base[strlen(base) - 1] != ':') strcat(base, "/");
+    modland_local_name(author[0] ? author : "Unknown", auth);
+    modland_local_name(name, local);
+    sprintf(rel, "%s%s/%s", base, auth, local);
+
+    /* Programs started elsewhere (HippoPlayer) need an absolute path. */
+    lock = Lock((STRPTR)rel, ACCESS_READ);
+    if (!lock) return 0;
+    ok = NameFromLock(lock, (STRPTR)out, len);
+    UnLock(lock);
+    return ok;
 }
 
 int engine_install_modland(const char *path, const char *author, const char *name)

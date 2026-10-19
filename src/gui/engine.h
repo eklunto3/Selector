@@ -43,6 +43,12 @@ const char *engine_modland_dir(void);
 int engine_install_modland(const char *path, const char *author, const char *name);
 const char *engine_modland_target(void);
 
+/* Absolute path of a downloaded module; 0 if it is not on disk. */
+int engine_modland_file(const char *author, const char *name, char *out, int len);
+
+/* HippoPlayer program from Settings ("" = not set). */
+const char *engine_player_path(void);
+
 /* Where extracted titles go, for the status line. */
 const char *engine_extract_target(void);
 
@@ -55,6 +61,7 @@ typedef struct {
     int skip_aga, skip_cd, skip_ntsc, skip_non_english;
     char aminet_dir[256];    /* "" = Aminet/ in the program directory */
     char modland_dir[256];   /* "" = Music/ in the program directory */
+    char player_path[256];   /* HippoPlayer program, used if it is not running */
 } engine_settings;
 
 void engine_get_settings(engine_settings *s);

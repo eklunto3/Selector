@@ -219,7 +219,7 @@ void modland_local_name(const char *name, char *out)
     size_t n = 0, ext_len;
 
     for (; *name && n < sizeof(clean) - 1; name++)
-        clean[n++] = (*name == ':' || *name == '/' || (unsigned char)*name < 32) ? '_' : *name;
+        clean[n++] = (*name == ':' || *name == '/' || *name == ' ' || (unsigned char)*name < 32) ? '_' : *name;
     clean[n] = 0;
     if (n <= 30) {
         strcpy(out, clean);

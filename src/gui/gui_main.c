@@ -28,6 +28,7 @@
 #include "gui/activity_log.h"
 #include "gui/aminet.h"
 #include "gui/modland.h"
+#include "gui/hippo.h"
 #include "gui/logo_data.h"
 
 extern const char *WHDLOAD_FILE_FILTER_DAT_GAMES;
@@ -38,14 +39,14 @@ extern const char *WHDLOAD_FILE_FILTER_DAT_MAGAZINES;
 extern const char *DIR_DAT_FILES;
 
 size_t __stack = 131072;   /* same as whdfetch */
-static const char version[] = "$VER: WHDSelector 1.3 (19.10.2026)";
+static const char version[] = "$VER: WHDSelector 1.4 (19.10.2026)";
 
 struct Library *MUIMasterBase;
 
 #define MAKE_ID(a, b, c, d) ((ULONG)(a) << 24 | (ULONG)(b) << 16 | (ULONG)(c) << 8 | (ULONG)(d))
 
 enum { ID_PACK = 1, ID_SEARCH, ID_LETTER, ID_REFRESH, ID_DOWNLOAD, ID_STOP,
-       ID_SETTINGS, ID_SET_SAVE, ID_SET_CANCEL, ID_SOURCE };
+       ID_SETTINGS, ID_SET_SAVE, ID_SET_CANCEL, ID_SOURCE, ID_PLAY, ID_DCLICK };
 
 /* ---- packs ---- */
 
@@ -91,7 +92,7 @@ static int letter_value(LONG active)
 /* ---- state ---- */
 
 static Object *app, *win, *cy_pack, *str_search, *cy_letter, *lv_list, *lst, *txt_status, *bt_refresh;
-static Object *bt_download, *bt_stop, *gauge, *bt_settings, *lst_log;
+static Object *bt_download, *bt_stop, *gauge, *bt_settings, *lst_log, *bt_play, *str_player;
 static Object *win_set, *str_dir, *cm_delete, *cm_aga, *cm_cd, *cm_ntsc, *cm_eng, *bt_save, *bt_cancel;
 static int engine_ok, quit_after_download;
 static char engine_msg[120];
@@ -487,6 +488,56 @@ static void download_selected(void)
     alog("%s", status);
 }
 
+/* Plays the active Modland module in HippoPlayer, downloading it first
+ * if needed. */
+static void play_selected(void)
+{
+    static char msg[200], file[300];
+    gl_entry *e = NULL;
+    int r;
+
+    if (source != SRC_MODLAND) {
+        set_status("Play works with Modland modules (Source: Modland).");
+        return;
+    }
+    DoMethod(lst, MUIM_NList_GetEntry, MUIV_NList_GetEntry_Active, (ULONG)&e);
+    if (!e) {
+        set_status("Select a module first.");
+        return;
+    }
+    if (!engine_modland_file(e->dir, e->name, file, sizeof(file))) {
+        /* Not on disk yet: download it like "Download selected". */
+        if (!engine_ok) engine_ok = engine_init(engine_msg, sizeof(engine_msg));
+        if (!engine_ok) {
+            alog("%s", engine_msg);
+            set_status(engine_msg);
+            return;
+        }
+        set(app, MUIA_Application_Sleep, TRUE);
+        set_status("Downloading module...");
+        alog("Download: %s (%lu KB)", e->name, (e->size + 1023) / 1024);
+        alog_capture_begin();
+        r = engine_install_modland(e->desc, e->dir, e->name);
+        alog_capture_end();
+        set(app, MUIA_Application_Sleep, FALSE);
+        if ((r != ENGINE_INSTALLED && r != ENGINE_SKIPPED) ||
+            !engine_modland_file(e->dir, e->name, file, sizeof(file))) {
+            alog("FAILED: %s could not be downloaded", e->name);
+            set_status("Download failed, see the log.");
+            return;
+        }
+    }
+
+    msg[0] = 0;
+    if (hippo_play(file, engine_player_path(), msg, sizeof(msg))) {
+        alog("Playing in HippoPlayer: %s", file);
+        sprintf(msg, "Playing: %.180s", e->name);
+    } else {
+        alog("Play failed: %s", msg);
+    }
+    set_status(msg);
+}
+
 /* ---- setup ---- */
 
 static Object *build_app(void)
@@ -576,6 +627,7 @@ static Object *build_app(void)
 
                 Child, HGroup,
                     Child, bt_download = SimpleButton("_Download selected"),
+                    Child, bt_play = SimpleButton("_Play"),
                     Child, bt_stop = SimpleButton("_Stop"),
                     Child, HSpace(0),
                     Child, bt_refresh = SimpleButton("_Refresh list"),
@@ -672,6 +724,21 @@ static Object *build_app(void)
                     Child, TextObject,
                         MUIA_Text_Contents, (ULONG)"\33cModules go to <directory>/<author>/. Empty = Music in the program directory",
                     End,
+                    Child, HGroup,
+                        Child, Label2("HippoPlayer:"),
+                        Child, PopaslObject,
+                            MUIA_Popstring_String, str_player = StringObject,
+                                StringFrame,
+                                MUIA_String_MaxLen, 255,
+                                MUIA_CycleChain, 1,
+                            End,
+                            MUIA_Popstring_Button, PopButton(MUII_PopFile),
+                            ASLFR_TitleText, (ULONG)"Select HippoPlayer",
+                        End,
+                    End,
+                    Child, TextObject,
+                        MUIA_Text_Contents, (ULONG)"\33cPlay / double-click: started if not running, then controlled over ARexx",
+                    End,
                 End,
 
                 Child, VGroup, GroupFrameT("WHDLoad list filters (applied on Refresh list)"),
@@ -706,6 +773,7 @@ static void open_settings(void)
     set(str_dir, MUIA_String_Contents, (ULONG)s.install_dir);
     set(str_amidir, MUIA_String_Contents, (ULONG)s.aminet_dir);
     set(str_moddir, MUIA_String_Contents, (ULONG)s.modland_dir);
+    set(str_player, MUIA_String_Contents, (ULONG)s.player_path);
     set(cm_delete, MUIA_Selected, s.delete_archives);
     set(cm_aga, MUIA_Selected, s.skip_aga);
     set(cm_cd, MUIA_Selected, s.skip_cd);
@@ -755,6 +823,9 @@ static void save_settings(void)
             if (last != ':' && last != '/') strcat(s.modland_dir, "/");
         }
     }
+    dir = NULL;
+    get(str_player, MUIA_String_Contents, &dir);
+    if (dir) strncpy(s.player_path, (const char *)dir, sizeof(s.player_path) - 1);
     s.delete_archives = (int)checked(cm_delete);
     s.skip_aga = (int)checked(cm_aga);
     s.skip_cd = (int)checked(cm_cd);
@@ -792,7 +863,9 @@ static void setup_notifies(void)
     DoMethod(bt_stop, MUIM_Notify, MUIA_Pressed, FALSE,
              (ULONG)app, 2, MUIM_Application_ReturnID, ID_STOP);
     DoMethod(lst, MUIM_Notify, MUIA_NList_DoubleClick, MUIV_EveryTime,
-             (ULONG)app, 2, MUIM_Application_ReturnID, ID_DOWNLOAD);
+             (ULONG)app, 2, MUIM_Application_ReturnID, ID_DCLICK);
+    DoMethod(bt_play, MUIM_Notify, MUIA_Pressed, FALSE,
+             (ULONG)app, 2, MUIM_Application_ReturnID, ID_PLAY);
     DoMethod(bt_settings, MUIM_Notify, MUIA_Pressed, FALSE,
              (ULONG)app, 2, MUIM_Application_ReturnID, ID_SETTINGS);
     DoMethod(bt_save, MUIM_Notify, MUIA_Pressed, FALSE,
@@ -873,6 +946,11 @@ int main(void)
             break;
         case ID_REFRESH:  refresh_lists(); break;
         case ID_DOWNLOAD: download_selected(); break;
+        case ID_PLAY:     play_selected(); break;
+        case ID_DCLICK:
+            /* Double-click plays a module, otherwise downloads. */
+            if (source == SRC_MODLAND) play_selected(); else download_selected();
+            break;
         case ID_SETTINGS: open_settings(); break;
         case ID_SET_SAVE: save_settings(); break;
         case ID_SET_CANCEL: set(win_set, MUIA_Window_Open, FALSE); break;

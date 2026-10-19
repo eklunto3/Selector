@@ -28,7 +28,8 @@ long modland_split_index(const char *zip_path, const char *out_dir);
 /* Percent-encodes a module path for the URL ('/' kept). 0 if too long. */
 int modland_url_encode(const char *path, char *out, int outlen);
 
-/* Name usable on an OS 3.1 FFS volume: no ':' or '/', at most 30 chars
+/* Name usable on an OS 3.1 FFS volume and on a command line: ":", "/" and
+ * spaces become "_", at most 30 chars
  * (the extension is kept when shortening). out needs 31 bytes. */
 void modland_local_name(const char *name, char *out);
 
