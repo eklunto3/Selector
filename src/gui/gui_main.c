@@ -27,6 +27,7 @@
 #include "gui/engine.h"
 #include "gui/activity_log.h"
 #include "gui/aminet.h"
+#include "gui/logo_data.h"
 
 extern const char *WHDLOAD_FILE_FILTER_DAT_GAMES;
 extern const char *WHDLOAD_FILE_FILTER_DAT_GAMES_BETA_AND_UNRELEASED;
@@ -36,7 +37,7 @@ extern const char *WHDLOAD_FILE_FILTER_DAT_MAGAZINES;
 extern const char *DIR_DAT_FILES;
 
 size_t __stack = 131072;   /* same as whdfetch */
-static const char version[] = "$VER: WHDSelector 0.9 (19.10.2026)";
+static const char version[] = "$VER: WHDSelector 1.0 (19.10.2026)";
 
 struct Library *MUIMasterBase;
 
@@ -451,6 +452,23 @@ static Object *build_app(void)
             MUIA_Window_Title, (ULONG)"WHDSelector",
             MUIA_Window_ID, MAKE_ID('W', 'H', 'D', 'S'),
             WindowContents, VGroup,
+
+                /* Logo banner (tools/make_logo.py), centred. */
+                Child, HGroup,
+                    Child, HSpace(0),
+                    Child, BodychunkObject,
+                        MUIA_FixWidth, LOGO_WIDTH,
+                        MUIA_FixHeight, LOGO_HEIGHT,
+                        MUIA_Bitmap_Width, LOGO_WIDTH,
+                        MUIA_Bitmap_Height, LOGO_HEIGHT,
+                        MUIA_Bodychunk_Depth, LOGO_DEPTH,
+                        MUIA_Bodychunk_Body, (ULONG)logo_body,
+                        MUIA_Bodychunk_Compression, 0,
+                        MUIA_Bodychunk_Masking, 0,
+                        MUIA_Bitmap_SourceColors, (ULONG)logo_colors,
+                    End,
+                    Child, HSpace(0),
+                End,
 
                 Child, HGroup,
                     Child, Label2("Source:"),
