@@ -83,20 +83,32 @@ static int category_of(const char *format, size_t len)
 
 /* ---- streaming split ---- */
 
+#define OUT_BUF (8 * 1024)     /* per output file; vbcc's default is 1 KB */
+#define IN_BUF  (32 * 1024)    /* for reading lists */
+
 typedef struct {
     FILE *out[NCAT][NLETTERS];   /* [cat][0] for unsplit categories */
+    FILE *all[NLETTERS];         /* every format, by author initial */
     char line[1024];
+    char rec[1200];
     int len;
     int overflow;
     long kept;
     int failed;
 } split_state;
 
+void modland_all_path(const char *dir, int letter, char *out)
+{
+    int slot = letter_slot(letter);
+    sprintf(out, "%s/all_%c.txt", dir, slot == 26 ? '#' : 'A' + slot);
+}
+
 static void handle_line(split_state *st, char *line)
 {
     char *tab = strchr(line, '\t');
     char *path, *slash, *author, *name, *end;
-    int cat, slot = 0;
+    int cat, slot = 0, aslot, n;
+    size_t alen;
     FILE *f;
 
     if (!tab) return;
@@ -111,16 +123,18 @@ static void handle_line(split_state *st, char *line)
     author = slash + 1;
     end = strchr(author, '/');
     if (!*name) return;
+    /* Files directly under the format directory have no author. */
+    alen = (end && end != author) ? (size_t)(end - author) : 0;
+    if (alen > 200) alen = 200;
+    aslot = alen ? letter_slot((unsigned char)*author) : 26;
 
-    if (categories[cat].split) slot = letter_slot((unsigned char)*author);
+    /* name<TAB>author<TAB>size<TAB>0<TAB>path */
+    n = sprintf(st->rec, "%.300s\t%.*s\t%.20s\t0\t%.400s\n", name, (int)alen, author, line, path);
+
+    if (categories[cat].split) slot = aslot;
     f = st->out[cat][slot];
-    if (!f) return;
-    /* name<TAB>author<TAB>size<TAB>0<TAB>path; files directly under the
-     * format directory have no author. */
-    fputs(name, f);
-    fputc('\t', f);
-    if (end && end != author) fwrite(author, 1, (size_t)(end - author), f);
-    fprintf(f, "\t%s\t0\t%s\n", line, path);
+    if (f) fwrite(st->rec, 1, (size_t)n, f);
+    if (st->all[aslot]) fwrite(st->rec, 1, (size_t)n, st->all[aslot]);
     st->kept++;
 }
 
@@ -163,10 +177,33 @@ long modland_split_index(const char *zip_path, const char *out_dir)
             sprintf(tmp, "%s.tmp", final_path);
             st->out[c][l] = fopen(tmp, "w");
             if (!st->out[c][l]) st->failed = 1;
+            else setvbuf(st->out[c][l], NULL, _IOFBF, OUT_BUF);
         }
+    }
+    for (l = 0; l < NLETTERS; l++) {
+        modland_all_path(out_dir, l == 26 ? '#' : 'A' + l, final_path);
+        sprintf(tmp, "%s.tmp", final_path);
+        st->all[l] = fopen(tmp, "w");
+        if (!st->all[l]) st->failed = 1;
+        else setvbuf(st->all[l], NULL, _IOFBF, OUT_BUF);
     }
 
     r = st->failed ? IF_ERR_IO : inflate_unzip_first_to_sink(zip_path, sink, st);
+
+    for (l = 0; l < NLETTERS; l++) {
+        if (!st->all[l]) continue;
+        if (fclose(st->all[l]) != 0) r = IF_ERR_IO;
+    }
+    for (l = 0; l < NLETTERS; l++) {
+        modland_all_path(out_dir, l == 26 ? '#' : 'A' + l, final_path);
+        sprintf(tmp, "%s.tmp", final_path);
+        if (r == IF_OK) {
+            remove(final_path);
+            if (rename(tmp, final_path) != 0) r = IF_ERR_IO;
+        } else {
+            remove(tmp);
+        }
+    }
 
     for (c = 0; c < NCAT; c++) {
         int n = categories[c].split ? NLETTERS : 1;
@@ -190,32 +227,64 @@ long modland_split_index(const char *zip_path, const char *out_dir)
 
 /* ---- search over all lists ---- */
 
-static int lower_c(int c) { return (c >= 'A' && c <= 'Z') ? c + 32 : c; }
+static unsigned char lower_tab[256];
+static int lower_ready;
 
-/* Case-insensitive substring; needle already lower case. */
-static int has_word(const char *hay, const char *needle, size_t n)
+static void init_lower(void)
 {
-    for (; *hay; hay++) {
+    int i;
+    for (i = 0; i < 256; i++) lower_tab[i] = (unsigned char)((i >= 'A' && i <= 'Z') ? i + 32 : i);
+    lower_ready = 1;
+}
+
+/* Query split into lower-case words. */
+typedef struct {
+    char text[128];
+    const char *word[8];
+    size_t len[8];
+    int count;
+} query_words;
+
+static void split_query(const char *query, query_words *q)
+{
+    size_t i;
+    char *p;
+    if (!lower_ready) init_lower();
+    for (i = 0; query && query[i] && i < sizeof(q->text) - 1; i++)
+        q->text[i] = (char)lower_tab[(unsigned char)query[i]];
+    q->text[i] = 0;
+    q->count = 0;
+    p = q->text;
+    while (*p && q->count < 8) {
+        while (*p == ' ') p++;
+        if (!*p) break;
+        q->word[q->count] = p;
+        while (*p && *p != ' ') p++;
+        q->len[q->count] = (size_t)(p - q->word[q->count]);
+        q->count++;
+    }
+}
+
+/* Case-insensitive substring search within [s, end). */
+static int has_word(const char *s, const char *end, const char *w, size_t n)
+{
+    unsigned char first = (unsigned char)w[0];
+    const char *last = end - n;
+    for (; s <= last; s++) {
         size_t i;
-        for (i = 0; i < n && hay[i] && lower_c((unsigned char)hay[i]) == needle[i]; i++)
+        if (lower_tab[(unsigned char)*s] != first) continue;
+        for (i = 1; i < n && lower_tab[(unsigned char)s[i]] == (unsigned char)w[i]; i++)
             ;
         if (i == n) return 1;
     }
     return 0;
 }
 
-/* All space-separated words of query must occur in line. */
-static int line_matches(const char *line, const char *query)
+static int line_matches(const char *s, const char *end, const query_words *q)
 {
-    const char *q = query;
-    while (*q) {
-        size_t n;
-        while (*q == ' ') q++;
-        n = 0;
-        while (q[n] && q[n] != ' ') n++;
-        if (n && !has_word(line, q, n)) return 0;
-        q += n;
-    }
+    int i;
+    for (i = 0; i < q->count; i++)
+        if (!has_word(s, end, q->word[i], q->len[i])) return 0;
     return 1;
 }
 
@@ -226,42 +295,107 @@ static int line_letter(const char *line)
     return tab ? letter_slot((unsigned char)tab[1]) : 26;
 }
 
+/* Optional in-memory copy of all lists (all_*.txt), for fast searches. */
+static char *cache;
+static long cache_len;
+
+void modland_cache_free(void)
+{
+    free(cache);
+    cache = NULL;
+    cache_len = 0;
+}
+
+int modland_cache_loaded(void) { return cache != NULL; }
+
+long modland_cache_load(const char *dir)
+{
+    char path[300];
+    long total = 0, pos = 0;
+    int l;
+
+    modland_cache_free();
+    for (l = 0; l < NLETTERS; l++) {
+        FILE *f;
+        modland_all_path(dir, l == 26 ? '#' : 'A' + l, path);
+        f = fopen(path, "rb");
+        if (!f) return -1;
+        fseek(f, 0, SEEK_END);
+        total += ftell(f);
+        fclose(f);
+    }
+    cache = (char *)malloc((size_t)total + 1);
+    if (!cache) return -1;
+    for (l = 0; l < NLETTERS; l++) {
+        FILE *f;
+        size_t got;
+        modland_all_path(dir, l == 26 ? '#' : 'A' + l, path);
+        f = fopen(path, "rb");
+        if (!f) { modland_cache_free(); return -1; }
+        got = fread(cache + pos, 1, (size_t)(total - pos), f);
+        fclose(f);
+        pos += (long)got;
+    }
+    cache[pos] = 0;
+    cache_len = pos;
+    return cache_len;
+}
+
 long modland_collect(const char *dir, int letter, const char *query, const char *out_path,
                      long max_hits, int *truncated, int *files_read)
 {
-    char lower_query[128], path[300], line[1024];
+    char path[300], *line, *inbuf = NULL;
+    query_words q;
     FILE *out;
     long hits = 0;
-    int c, l, want = letter ? letter_slot(letter) : -1;
-    size_t i;
+    int l, want = letter ? letter_slot(letter) : -1;
 
     *truncated = 0;
     if (files_read) *files_read = 0;
-    for (i = 0; query && query[i] && i < sizeof(lower_query) - 1; i++)
-        lower_query[i] = (char)lower_c((unsigned char)query[i]);
-    lower_query[i] = 0;
+    split_query(query, &q);
+    line = (char *)malloc(1024);
+    if (!line) return -1;
 
     out = fopen(out_path, "w");
-    if (!out) return -1;
-    for (c = 0; c < NCAT && !*truncated; c++) {
-        int n = categories[c].split ? NLETTERS : 1;
-        for (l = 0; l < n && !*truncated; l++) {
+    if (!out) { free(line); return -1; }
+    setvbuf(out, NULL, _IOFBF, OUT_BUF);
+
+    if (cache && want < 0) {
+        /* Whole catalogue in memory: no disk access at all. */
+        const char *s = cache, *end = cache + cache_len;
+        if (files_read) *files_read = NLETTERS;
+        while (s < end && !*truncated) {
+            const char *nl = memchr(s, '\n', (size_t)(end - s));
+            const char *e = nl ? nl : end;
+            if (line_matches(s, e, &q)) {
+                fwrite(s, 1, (size_t)(e - s), out);
+                fputc('\n', out);
+                if (++hits >= max_hits) *truncated = 1;
+            }
+            s = e + 1;
+        }
+    } else {
+        inbuf = (char *)malloc(IN_BUF);
+        for (l = 0; l < NLETTERS && !*truncated; l++) {
             FILE *in;
-            /* Split lists are already per letter: read only the right one. */
-            if (categories[c].split && want >= 0 && l != want) continue;
-            modland_list_path(dir, c, categories[c].split ? (l == 26 ? '#' : 'A' + l) : 0, path);
+            if (want >= 0 && l != want) continue;
+            modland_all_path(dir, l == 26 ? '#' : 'A' + l, path);
             in = fopen(path, "r");
             if (!in) continue;
+            if (inbuf) setvbuf(in, inbuf, _IOFBF, IN_BUF);
             if (files_read) (*files_read)++;
-            while (fgets(line, sizeof(line), in)) {
+            while (fgets(line, 1024, in)) {
+                size_t n = strlen(line);
                 if (want >= 0 && line_letter(line) != want) continue;
-                if (lower_query[0] && !line_matches(line, lower_query)) continue;
+                if (q.count && !line_matches(line, line + n, &q)) continue;
                 fputs(line, out);
                 if (++hits >= max_hits) { *truncated = 1; break; }
             }
             fclose(in);
         }
+        free(inbuf);
     }
+    free(line);
     if (fclose(out) != 0) return -1;
     return hits;
 }

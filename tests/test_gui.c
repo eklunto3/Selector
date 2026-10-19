@@ -165,7 +165,7 @@ int main(int argc, char **argv)
                 int files = 0;
                 hits = modland_collect(dir, 'C', NULL, path, 12000, &trunc, &files);
                 printf("all formats, authors C: %ld from %d files\n", hits, files);
-                CHECK(files == 20 && hits > 2000);
+                CHECK(files == 1 && hits == 5753);
                 CHECK(gl_load(&m, path, GL_FMT_AMINET));
                 for (i = 0, n = 0; i < m.count; i++) {
                     CHECK(m.items[i].dir[0] == 'C' || m.items[i].dir[0] == 'c');
@@ -176,6 +176,15 @@ int main(int argc, char **argv)
             }
             hits = modland_search(dir, "a", path, 50, &trunc);
             CHECK(hits == 50 && trunc);
+            /* Same searches from the in-memory copy. */
+            CHECK(modland_cache_load(dir) > 5000000);
+            CHECK(modland_cache_loaded());
+            hits = modland_search(dir, "space debris", path, 2000, &trunc);
+            CHECK(hits == 2);
+            hits = modland_search(dir, "Purple Motion sundance", path, 2000, &trunc);
+            CHECK(hits == 1);
+            modland_cache_free();
+            CHECK(!modland_cache_loaded());
         }
     }
 

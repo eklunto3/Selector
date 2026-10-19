@@ -11,6 +11,7 @@
 #include <string.h>
 
 #include <exec/types.h>
+#include <exec/memory.h>
 #include <dos/dos.h>
 #include <dos/dostags.h>
 #include <libraries/mui.h>
@@ -39,7 +40,7 @@ extern const char *WHDLOAD_FILE_FILTER_DAT_MAGAZINES;
 extern const char *DIR_DAT_FILES;
 
 size_t __stack = 131072;   /* same as whdfetch */
-static const char version[] = "$VER: WHDSelector 1.7 (19.10.2026)";
+static const char version[] = "$VER: WHDSelector 1.8 (19.10.2026)";
 
 struct Library *MUIMasterBase;
 
@@ -138,6 +139,12 @@ static void modland_search_all(void)
     sprintf(path, "%s/search.txt", engine_modland_dir());
     set(app, MUIA_Application_Sleep, TRUE);
     set(txt_status, MUIA_Text_Contents, (ULONG)"Searching all formats...");
+    /* With plenty of RAM keep the whole catalogue (about 7 MB) in memory:
+     * the first search loads it, later searches need no disk access. */
+    if (!modland_cache_loaded() && AvailMem(MEMF_ANY) > 24UL * 1024 * 1024) {
+        long size = modland_cache_load(engine_modland_dir());
+        if (size > 0) alog("Modland catalogue kept in memory for searching (%ld KB)", size / 1024);
+    }
     {
         int files = 0;
         hits = modland_collect(engine_modland_dir(), 0, (const char *)q, path, 2000, &truncated, &files);
@@ -394,20 +401,16 @@ static void load_pack(void)
             sprintf(list_file, "%s/search.txt", engine_modland_dir());
             found = gl_load(&games, list_file, GL_FMT_AMINET);
         } else if (pack == 0) {
-            /* "All formats": every format, authors with the chosen initial. */
-            long hits;
-            int truncated, files;
+            /* "All formats": every format, authors with the chosen initial,
+             * from the ready-made list written by Refresh list. */
             if (l == GL_LETTER_ALL) {
                 nnset(cy_letter, MUIA_Cycle_Active, 2);
                 l = 'A';
             }
-            sprintf(list_file, "%s/all.txt", engine_modland_dir());
-            set(app, MUIA_Application_Sleep, TRUE);
-            hits = modland_collect(engine_modland_dir(), l, NULL, list_file, 12000, &truncated, &files);
-            set(app, MUIA_Application_Sleep, FALSE);
-            alog("Modland all formats, authors '%c': %ld modules from %d list files",
-                 l, hits, files);
-            found = hits > 0 && gl_load(&games, list_file, GL_FMT_AMINET);
+            modland_all_path(engine_modland_dir(), l, list_file);
+            found = gl_load(&games, list_file, GL_FMT_AMINET);
+            if (found) alog("Modland all formats, authors '%c': %ld modules", l, games.count);
+            else alog("Modland list %s missing: press Refresh list once", list_file);
         } else {
             int cat = (int)pack - 1;
             if (modland_category_split(cat) && l == GL_LETTER_ALL) {
@@ -489,6 +492,8 @@ static void refresh_lists(void)
     }
     alog_capture_end();
     alog("Refresh: lists updated.");
+    modland_cache_free();          /* old copy is stale now */
+    modland_searched = 0;
     set(app, MUIA_Application_Sleep, FALSE);
     load_pack();
 }
@@ -1076,6 +1081,7 @@ int main(void)
     alog_capture_begin();
     engine_shutdown();
     alog_capture_end();
+    modland_cache_free();
     alog("WHDSelector closed");
     alog_close();
 

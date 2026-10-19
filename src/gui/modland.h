@@ -40,6 +40,16 @@ long modland_search(const char *dir, const char *query, const char *out_path,
 long modland_collect(const char *dir, int letter, const char *query, const char *out_path,
                      long max_hits, int *truncated, int *files_read);
 
+/* Ready-made list of every format for one author initial
+ * ("<dir>/all_<L>.txt", written by modland_split_index). */
+void modland_all_path(const char *dir, int letter, char *out);
+
+/* Optional: keep all lists in memory (about 7 MB) so searches need no
+ * disk access. Returns the size, or -1 (then searches read the disk). */
+long modland_cache_load(const char *dir);
+void modland_cache_free(void);
+int modland_cache_loaded(void);
+
 /* Percent-encodes a module path for the URL ('/' kept). 0 if too long. */
 int modland_url_encode(const char *path, char *out, int outlen);
 
