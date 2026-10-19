@@ -22,6 +22,12 @@ unsigned long aminet_parse_size(const char *s);
  * number of packages, or -1 on a file error. */
 long aminet_split_index(const char *index_path, const char *out_dir);
 
+/* Searches the category lists in dir (all 16) for every word of query in
+ * name, directory or description; writes up to max_hits lines to
+ * out_path. Returns hits, -1 on error; files_read 0 = no lists yet. */
+long aminet_search(const char *dir, const char *query, const char *out_path,
+                   long max_hits, int *truncated, int *files_read);
+
 /* Converts a whole INDEX-format file (e.g. RECENT) to one list file in
  * the same format. Returns the number of packages or -1. */
 long aminet_convert_list(const char *in_path, const char *out_path);

@@ -44,7 +44,7 @@ extern const char *WHDLOAD_FILE_FILTER_DAT_MAGAZINES;
 extern const char *DIR_DAT_FILES;
 
 size_t __stack = 131072;   /* same as whdfetch */
-static const char version[] = "$VER: WHDSelector 2.1 (19.10.2026)";
+static const char version[] = "$VER: WHDSelector 2.2 (19.10.2026)";
 
 struct Library *MUIMasterBase;
 
@@ -212,15 +212,49 @@ static const char *source_labels[] = { "Retroplay WHDLoad", "Aminet", "Modland (
 #define FORMAT_SCENE     "DELTA=16 W=40,DELTA=16 W=20,DELTA=16 W=25,P=\33r W=15"
 
 /* Aminet "category" gadget: Recent first (the default view, like the
- * Aminet front page), then the 16 top-level categories. */
-static const char *cat_labels[AMINET_NUM_CATEGORIES + 2];
+ * Aminet front page), "All categories" (search), then the 16 top-level
+ * categories. */
+static const char *cat_labels[AMINET_NUM_CATEGORIES + 3];
+static int aminet_searched;    /* a search has written temp/Aminet/search.txt */
 
 static void init_cat_labels(void)
 {
     int i;
     cat_labels[0] = "Recent (last 14 days)";
-    for (i = 0; i < AMINET_NUM_CATEGORIES; i++) cat_labels[i + 1] = aminet_categories[i];
-    cat_labels[AMINET_NUM_CATEGORIES + 1] = NULL;
+    cat_labels[1] = "All categories";
+    for (i = 0; i < AMINET_NUM_CATEGORIES; i++) cat_labels[i + 2] = aminet_categories[i];
+    cat_labels[AMINET_NUM_CATEGORIES + 2] = NULL;
+}
+
+/* Aminet "All categories": Enter in Search searches every category. */
+static void aminet_search_all(void)
+{
+    STRPTR q = NULL;
+    long hits;
+    int truncated, files = 0;
+
+    get(str_search, MUIA_String_Contents, &q);
+    if (!q || strlen((const char *)q) < 2) {
+        set(txt_status, MUIA_Text_Contents, (ULONG)"Type at least two characters, then press Enter.");
+        return;
+    }
+    set(app, MUIA_Application_Sleep, TRUE);
+    set(txt_status, MUIA_Text_Contents, (ULONG)"Searching all Aminet categories...");
+    hits = aminet_search("temp/Aminet", (const char *)q, "temp/Aminet/search.txt", 2000,
+                         &truncated, &files);
+    set(app, MUIA_Application_Sleep, FALSE);
+    alog("Aminet search '%s': %ld packages%s, %d lists read", (const char *)q, hits,
+         truncated ? " (first 2000)" : "", files);
+    if (hits < 0 || files == 0) {
+        set(txt_status, MUIA_Text_Contents, (ULONG)"No Aminet lists yet. Press \"Refresh list\".");
+        return;
+    }
+    aminet_searched = 1;
+    nnset(cy_letter, MUIA_Cycle_Active, 0);
+    load_pack();
+    if (truncated)
+        set(txt_status, MUIA_Text_Contents,
+            (ULONG)"First 2000 matches shown - add words to narrow the search.");
 }
 
 /* ---- NList display hook ---- */
@@ -402,9 +436,15 @@ static int find_list_file(const char *filter, char *out, int outlen)
 
 /* ---- list handling ---- */
 
+/* True in the "search everything" views: Modland "All formats" and
+ * Aminet "All categories". There Search waits for Return. */
 static int mod_search_mode(void)
 {
     LONG m = 1;
+    if (source == SRC_AMINET) {
+        get(cy_cat, MUIA_Cycle_Active, &m);
+        return m == 1;
+    }
     if (source != SRC_MODLAND) return 0;
     get(cy_mod, MUIA_Cycle_Active, &m);
     return m == 0;
@@ -437,10 +477,10 @@ static void apply_filter(void)
     set(lst, MUIA_NList_Quiet, FALSE);
 
     if (games.count > 0)
-        sprintf(status, mod_search_mode() ? "Showing %ld of %ld  - type in Search and press Enter to search all formats"
+        sprintf(status, mod_search_mode() ? "Showing %ld of %ld  - type in Search and press Return to search everything"
                                           : "Showing %ld of %ld  (%s)", n, games.count, FilePart((STRPTR)list_file));
     else if (need_search)
-        sprintf(status, "Type a song or author in Search and press Enter to search all formats.");
+        sprintf(status, "Type a name in Search and press Return to search everything.");
     else if (source == SRC_MODLAND && modland_searched)
         sprintf(status, "No modules found. Try fewer or shorter words and press Enter.");
     else
@@ -502,9 +542,18 @@ static void load_pack(void)
         games.letter_on_dir = 1;   /* Letter = author's initial */
     } else if (source == SRC_AMINET) {
         get(cy_cat, MUIA_Cycle_Active, &pack);
-        if (pack == 0) strcpy(list_file, "temp/Aminet/recent.txt");
-        else sprintf(list_file, "temp/Aminet/%s.txt", aminet_categories[pack - 1]);
-        found = gl_load(&games, list_file, GL_FMT_AMINET);
+        if (pack == 0) {
+            strcpy(list_file, "temp/Aminet/recent.txt");
+            found = gl_load(&games, list_file, GL_FMT_AMINET);
+        } else if (pack == 1) {
+            /* "All categories": results of the last search (Enter). */
+            strcpy(list_file, "temp/Aminet/search.txt");
+            found = aminet_searched && gl_load(&games, list_file, GL_FMT_AMINET);
+            if (!found) need_search = 1;
+        } else {
+            sprintf(list_file, "temp/Aminet/%s.txt", aminet_categories[pack - 2]);
+            found = gl_load(&games, list_file, GL_FMT_AMINET);
+        }
     } else {
         get(cy_pack, MUIA_Cycle_Active, &pack);
         found = find_list_file(pack_filter((int)pack), list_file, sizeof(list_file)) &&
@@ -572,6 +621,7 @@ static void refresh_lists(void)
     alog("Refresh: lists updated.");
     modland_cache_free();          /* old copy is stale now */
     modland_searched = 0;
+    aminet_searched = 0;
     set(app, MUIA_Application_Sleep, FALSE);
     load_pack();
 }
@@ -1360,14 +1410,16 @@ int main(void)
         id = (LONG)DoMethod(app, MUIM_Application_NewInput, (ULONG)&sigs);
         if (id == (LONG)MUIV_Application_ReturnID_Quit) break;
         switch (id) {
-        case ID_PACK:     modland_searched = 0; load_pack(); break;
+        case ID_PACK:     modland_searched = 0; aminet_searched = 0; load_pack(); break;
         case ID_SOURCE:   switch_source(); break;
         case ID_SEARCH:
             /* Live filter; "Search all formats" waits for Enter instead. */
             if (!mod_search_mode()) apply_filter();
             break;
         case ID_SEARCH_GO:
-            if (mod_search_mode()) modland_search_all();
+            if (mod_search_mode()) {
+                if (source == SRC_AMINET) aminet_search_all(); else modland_search_all();
+            }
             break;
         case ID_LETTER:
             modland_searched = 0;

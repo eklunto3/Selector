@@ -3,6 +3,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include "gui/aminet.h"
+#include "gui/textsearch.h"
 
 const char *aminet_categories[AMINET_NUM_CATEGORIES + 1] = {
     "biz", "comm", "demo", "dev", "disk", "docs", "driver", "game",
@@ -150,4 +151,18 @@ long aminet_split_index(const char *index_path, const char *out_dir)
         }
     }
     return ok ? count : -1;
+}
+
+long aminet_search(const char *dir, const char *query, const char *out_path,
+                   long max_hits, int *truncated, int *files_read)
+{
+    static char paths[AMINET_NUM_CATEGORIES][300];
+    const char *list[AMINET_NUM_CATEGORIES];
+    int i;
+    for (i = 0; i < AMINET_NUM_CATEGORIES; i++) {
+        sprintf(paths[i], "%.250s/%s.txt", dir, aminet_categories[i]);
+        list[i] = paths[i];
+    }
+    return ts_search_files(list, AMINET_NUM_CATEGORIES, query, out_path, max_hits,
+                           truncated, files_read);
 }

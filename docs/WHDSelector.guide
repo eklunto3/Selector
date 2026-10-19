@@ -103,7 +103,10 @@
 @{b}Aminet@{ub}
 
   The first category, @{b}Recent (last 14 days)@{ub}, shows the newest
-  uploads. The other categories are Aminet's top-level directories.
+  uploads. @{b}All categories@{ub}: type a name or words from the
+  description into Search and press Return to search the whole of
+  Aminet (up to 2000 results). The other categories are Aminet.s
+  top-level directories.
   Columns: name, category, size, age and description. Search also matches
   descriptions.
 

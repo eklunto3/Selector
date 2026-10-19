@@ -4,6 +4,7 @@
 #include <string.h>
 #include "gui/modland.h"
 #include "gui/inflate.h"
+#include "gui/textsearch.h"
 
 /* Amiga formats, by Modland directory name (checked 2026-10-19). */
 typedef struct {
@@ -230,67 +231,6 @@ long modland_split_index(const char *zip_path, const char *out_dir)
 
 /* ---- search over all lists ---- */
 
-static unsigned char lower_tab[256];
-static int lower_ready;
-
-static void init_lower(void)
-{
-    int i;
-    for (i = 0; i < 256; i++) lower_tab[i] = (unsigned char)((i >= 'A' && i <= 'Z') ? i + 32 : i);
-    lower_ready = 1;
-}
-
-/* Query split into lower-case words. */
-typedef struct {
-    char text[128];
-    const char *word[8];
-    size_t len[8];
-    int count;
-} query_words;
-
-static void split_query(const char *query, query_words *q)
-{
-    size_t i;
-    char *p;
-    if (!lower_ready) init_lower();
-    for (i = 0; query && query[i] && i < sizeof(q->text) - 1; i++)
-        q->text[i] = (char)lower_tab[(unsigned char)query[i]];
-    q->text[i] = 0;
-    q->count = 0;
-    p = q->text;
-    while (*p && q->count < 8) {
-        while (*p == ' ') p++;
-        if (!*p) break;
-        q->word[q->count] = p;
-        while (*p && *p != ' ') p++;
-        q->len[q->count] = (size_t)(p - q->word[q->count]);
-        q->count++;
-    }
-}
-
-/* Case-insensitive substring search within [s, end). */
-static int has_word(const char *s, const char *end, const char *w, size_t n)
-{
-    unsigned char first = (unsigned char)w[0];
-    const char *last = end - n;
-    for (; s <= last; s++) {
-        size_t i;
-        if (lower_tab[(unsigned char)*s] != first) continue;
-        for (i = 1; i < n && lower_tab[(unsigned char)s[i]] == (unsigned char)w[i]; i++)
-            ;
-        if (i == n) return 1;
-    }
-    return 0;
-}
-
-static int line_matches(const char *s, const char *end, const query_words *q)
-{
-    int i;
-    for (i = 0; i < q->count; i++)
-        if (!has_word(s, end, q->word[i], q->len[i])) return 0;
-    return 1;
-}
-
 /* Author initial of a list line "name<TAB>author<TAB>...". */
 static int line_letter(const char *line)
 {
@@ -348,14 +288,14 @@ long modland_collect(const char *dir, int letter, const char *query, const char 
                      long max_hits, int *truncated, int *files_read)
 {
     char path[300], *line, *inbuf = NULL;
-    query_words q;
+    ts_query q;
     FILE *out;
     long hits = 0;
     int l, want = letter ? letter_slot(letter) : -1;
 
     *truncated = 0;
     if (files_read) *files_read = 0;
-    split_query(query, &q);
+    ts_prepare(query, &q);
     line = (char *)malloc(1024);
     if (!line) return -1;
 
@@ -370,7 +310,7 @@ long modland_collect(const char *dir, int letter, const char *query, const char 
         while (s < end && !*truncated) {
             const char *nl = memchr(s, '\n', (size_t)(end - s));
             const char *e = nl ? nl : end;
-            if (line_matches(s, e, &q)) {
+            if (ts_matches(s, e, &q)) {
                 fwrite(s, 1, (size_t)(e - s), out);
                 fputc('\n', out);
                 if (++hits >= max_hits) *truncated = 1;
@@ -390,7 +330,7 @@ long modland_collect(const char *dir, int letter, const char *query, const char 
             while (fgets(line, 1024, in)) {
                 size_t n = strlen(line);
                 if (want >= 0 && line_letter(line) != want) continue;
-                if (q.count && !line_matches(line, line + n, &q)) continue;
+                if (q.count && !ts_matches(line, line + n, &q)) continue;
                 fputs(line, out);
                 if (++hits >= max_hits) { *truncated = 1; break; }
             }

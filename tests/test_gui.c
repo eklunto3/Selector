@@ -136,6 +136,27 @@ int main(int argc, char **argv)
         }
     CHECK(found_aaa);
 
+    /* Aminet search over all categories. */
+    {
+        int trunc, files;
+        long hits;
+        gl_list r = { 0, 0, 0, 0 };
+        sprintf(out, "%s/aminet_search.txt", argv[1]);
+        hits = aminet_search(argv[1], "ULTIMATE address book", out, 2000, &trunc, &files);
+        printf("aminet search 'ULTIMATE address book': %ld from %d lists\n", hits, files);
+        CHECK(files == 16 && hits >= 1 && !trunc);
+        CHECK(gl_load(&r, out, GL_FMT_AMINET));
+        for (i = 0, n = 0; i < r.count; i++)
+            if (strcmp(r.items[i].name, "AAA_MegaBook.lha") == 0) n = 1;
+        CHECK(n == 1);
+        gl_free(&r);
+        hits = aminet_search(argv[1], "lha", out, 100, &trunc, &files);
+        CHECK(hits == 100 && trunc);
+        hits = aminet_search(argv[1], "mui player", out, 2000, &trunc, &files);
+        printf("aminet search 'mui player': %ld\n", hits);
+        CHECK(hits > 10);
+    }
+
     shown = (gl_entry **)malloc((size_t)list.count * sizeof(gl_entry *));
     n = gl_filter(&list, "address", GL_LETTER_ALL, shown);   /* matches descriptions */
     printf("biz 'address': %ld\n", n);
